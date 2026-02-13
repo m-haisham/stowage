@@ -7,7 +7,7 @@ edition = "2024"
 default = []
 
 # Backends / adapters (kept in `src/adapters/`).
-memory = []
+memory = ["dep:tokio"]
 local = ["dep:tokio", "dep:tokio-util", "dep:bytes"]
 s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-smithy-types", "dep:bytes", "dep:tokio", "dep:tokio-util"]
 
@@ -36,3 +36,7 @@ aws-smithy-types = { version = "1.2.13", optional = true }
 reqwest = { version = "0.12.12", default-features = true, features = ["json", "stream", "rustls-tls"], optional = true }
 serde = { version = "1.0.218", features = ["derive"], optional = true }
 serde_json = { version = "1.0.139", optional = true }
+
+[dev-dependencies]
+tempfile = "3.13.0"
+tokio = { version = "1.43.0", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync"] }
