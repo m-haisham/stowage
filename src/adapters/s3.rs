@@ -1,7 +1,6 @@
 use crate::{Error, Result, Storage};
 use aws_sdk_s3::{Client, primitives::ByteStream};
 use futures::stream::BoxStream;
-use std::fmt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// S3 adapter implementing [`Storage`] with `String` identifiers.
@@ -15,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// - Uploads (`put`) currently buffer the full input into memory because the crate-level
 ///   `put` signature takes a `futures::io::AsyncRead`. If you also migrate `put` to
 ///   be Tokio-native or accept a stream, this can be made fully streaming.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct S3Storage {
     client: Client,
     bucket: String,
@@ -45,14 +44,6 @@ impl S3Storage {
         E: std::error::Error + Send + Sync + 'static,
     {
         Error::Connection(Box::new(e))
-    }
-}
-
-impl fmt::Debug for S3Storage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("S3Storage")
-            .field("bucket", &self.bucket)
-            .finish_non_exhaustive()
     }
 }
 

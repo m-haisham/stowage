@@ -29,6 +29,12 @@ pub enum Error {
 ///
 /// Note: each module is only compiled if its feature is enabled.
 pub mod adapters {
+    #[cfg(feature = "azure")]
+    pub mod azure;
+    #[cfg(feature = "box_storage")]
+    pub mod box_storage;
+    #[cfg(feature = "dropbox")]
+    pub mod dropbox;
     #[cfg(feature = "gdrive")]
     pub mod gdrive;
     #[cfg(feature = "local")]
@@ -39,10 +45,18 @@ pub mod adapters {
     pub mod onedrive;
     #[cfg(feature = "s3")]
     pub mod s3;
+    #[cfg(feature = "webdav")]
+    pub mod webdav;
 }
 
 // Convenient re-exports at the crate root.
 #[allow(ambiguous_glob_reexports)]
+#[cfg(feature = "azure")]
+pub use adapters::azure::*;
+#[cfg(feature = "box_storage")]
+pub use adapters::box_storage::*;
+#[cfg(feature = "dropbox")]
+pub use adapters::dropbox::*;
 #[cfg(feature = "gdrive")]
 pub use adapters::gdrive::*;
 #[cfg(feature = "local")]
@@ -53,6 +67,8 @@ pub use adapters::memory::*;
 pub use adapters::onedrive::*;
 #[cfg(feature = "s3")]
 pub use adapters::s3::*;
+#[cfg(feature = "webdav")]
+pub use adapters::webdav::*;
 
 /// The core storage contract.
 ///

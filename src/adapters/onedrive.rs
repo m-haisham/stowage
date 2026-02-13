@@ -2,7 +2,7 @@ use crate::{Error, Result, Storage};
 use futures::stream::{BoxStream, StreamExt};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use reqwest::{Client, StatusCode, Url};
-use std::fmt;
+use secrecy::{ExposeSecret, SecretString};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 /// OneDrive adapter implementing [`Storage`] using **native OneDrive item IDs**.
@@ -12,28 +12,29 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 ///
 /// # Auth
 /// Requires a valid OAuth2 access token with `Files.ReadWrite` (or similar) scope.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OneDriveStorage {
     client: Client,
     base_url: Url,
     token_provider: TokenProvider,
 }
 
-impl fmt::Debug for OneDriveStorage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OneDriveStorage")
-            .field("base_url", &self.base_url.as_str())
-            .finish_non_exhaustive()
-    }
-}
-
 /// How this adapter obtains the OAuth2 access token.
 #[derive(Clone)]
 pub enum TokenProvider {
     /// A fixed bearer token.
-    Static(String),
+    Static(SecretString),
     /// A user-provided async token callback.
     Callback(std::sync::Arc<dyn Fn() -> TokenFuture + Send + Sync>),
+}
+
+impl std::fmt::Debug for TokenProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenProvider::Static(_) => f.debug_tuple("Static").field(&"<redacted>").finish(),
+            TokenProvider::Callback(_) => f.debug_tuple("Callback").finish(),
+        }
+    }
 }
 
 type TokenFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>;
@@ -51,8 +52,8 @@ impl OneDriveStorage {
 
     async fn access_token(&self) -> Result<String> {
         match &self.token_provider {
-            TokenProvider::Static(t) => Ok(t.clone()),
-            TokenProvider::Callback(cb) => (cb)().await,
+            TokenProvider::Static(tok) => Ok(tok.expose_secret().to_string()),
+            TokenProvider::Callback(f) => f().await,
         }
     }
 

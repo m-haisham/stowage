@@ -1,6 +1,5 @@
 use crate::{Error, Result, Storage};
 use futures::stream::{self, BoxStream};
-use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
@@ -16,17 +15,9 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 ///
 /// If your current `Storage` trait still uses `futures::io::AsyncRead`, you'll need to
 /// refactor it (as discussed) for this adapter to compile.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LocalStorage {
     root: PathBuf,
-}
-
-impl fmt::Debug for LocalStorage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LocalStorage")
-            .field("root", &self.root)
-            .finish()
-    }
 }
 
 impl LocalStorage {
