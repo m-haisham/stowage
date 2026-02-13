@@ -3,6 +3,36 @@ name = "stowage"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+
+# Backends / adapters (kept in `src/adapters/`).
+memory = []
+local = ["dep:tokio", "dep:tokio-util", "dep:bytes"]
+s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-smithy-types", "dep:bytes", "dep:tokio", "dep:tokio-util"]
+
+# Cloud drive adapters (native item IDs).
+# NOTE: These require OAuth2 tokens and additional wiring in code.
+gdrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio", "dep:tokio-util"]
+onedrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio", "dep:tokio-util"]
+
 [dependencies]
 futures = "0.3.31"
 thiserror = "2.0.18"
+
+# Common optional utilities for adapters
+bytes = { version = "1.10.0", optional = true }
+
+# Tokio runtime + helpers (local/fs + stream adapters)
+tokio = { version = "1.43.0", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync"], optional = true }
+tokio-util = { version = "0.7.13", features = ["io"], optional = true }
+
+# AWS S3 (official AWS SDK)
+aws-config = { version = "1.6.1", optional = true }
+aws-sdk-s3 = { version = "1.77.0", optional = true }
+aws-smithy-types = { version = "1.2.13", optional = true }
+
+# HTTP + JSON for Drive/OneDrive adapters
+reqwest = { version = "0.12.12", default-features = true, features = ["json", "stream", "rustls-tls"], optional = true }
+serde = { version = "1.0.218", features = ["derive"], optional = true }
+serde_json = { version = "1.0.139", optional = true }
