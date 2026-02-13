@@ -35,6 +35,8 @@ pub mod adapters {
     pub mod box_storage;
     #[cfg(feature = "dropbox")]
     pub mod dropbox;
+    #[cfg(feature = "ftp")]
+    pub mod ftp;
     #[cfg(feature = "gdrive")]
     pub mod gdrive;
     #[cfg(feature = "local")]
@@ -45,6 +47,8 @@ pub mod adapters {
     pub mod onedrive;
     #[cfg(feature = "s3")]
     pub mod s3;
+    #[cfg(feature = "sftp")]
+    pub mod sftp;
     #[cfg(feature = "webdav")]
     pub mod webdav;
 }
@@ -57,6 +61,8 @@ pub use adapters::azure::*;
 pub use adapters::box_storage::*;
 #[cfg(feature = "dropbox")]
 pub use adapters::dropbox::*;
+#[cfg(feature = "ftp")]
+pub use adapters::ftp::*;
 #[cfg(feature = "gdrive")]
 pub use adapters::gdrive::*;
 #[cfg(feature = "local")]
@@ -67,6 +73,8 @@ pub use adapters::memory::*;
 pub use adapters::onedrive::*;
 #[cfg(feature = "s3")]
 pub use adapters::s3::*;
+#[cfg(feature = "sftp")]
+pub use adapters::sftp::*;
 #[cfg(feature = "webdav")]
 pub use adapters::webdav::*;
 

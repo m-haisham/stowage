@@ -22,6 +22,10 @@ box_storage = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:t
 azure = ["dep:reqwest", "dep:bytes", "dep:tokio", "dep:tokio-util", "dep:urlencoding"]
 webdav = ["dep:reqwest", "dep:bytes", "dep:tokio", "dep:tokio-util", "dep:urlencoding"]
 
+# File transfer protocols
+sftp = ["dep:ssh2", "dep:tokio", "dep:tokio-util", "dep:bytes"]
+ftp = ["dep:suppaftp", "dep:tokio", "dep:tokio-util", "dep:bytes"]
+
 [dependencies]
 futures = "0.3.31"
 thiserror = "2.0.18"
@@ -46,6 +50,12 @@ urlencoding = { version = "2.1.3", optional = true }
 
 # Security - protect sensitive data
 secrecy = { version = "0.10.3", features = ["serde"] }
+
+# SFTP support via SSH2
+ssh2 = { version = "0.9", optional = true }
+
+# FTP support
+suppaftp = { version = "6.0", features = ["async", "async-native-tls"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.13.0"
