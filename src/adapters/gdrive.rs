@@ -1,17 +1,22 @@
 use crate::{Error, Result, Storage};
 use futures::stream::{BoxStream, StreamExt};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Client, StatusCode, Url};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-/// Google Drive adapter (stub) implementing [`Storage`] using **native Google Drive file IDs**.
+/// Google Drive adapter implementing [`Storage`] using **native Google Drive file IDs**.
 ///
 /// ## Identifier
 /// `Id = String` where the string is the Drive `fileId` (e.g. `"1ZdR3L...abc"`).
 ///
 /// ## Auth
 /// This adapter expects you to supply an OAuth2 access token (and refresh it externally).
+///
+/// ## Put Semantics
+/// The `put` operation updates an existing file's content by its file ID.
+/// To create new files, you would need to use the Google Drive API directly
+/// to create the file and obtain its ID first.
 ///
 /// ## Feature flags
 /// Intended to be used behind the `gdrive` feature.
@@ -90,6 +95,13 @@ impl GoogleDriveStorage {
         Ok(url)
     }
 
+    fn upload_url(&self, file_id: &str) -> Result<Url> {
+        // Use the upload endpoint for updating file content
+        let base = "https://www.googleapis.com/upload/drive/v3/";
+        let url_str = format!("{}files/{}?uploadType=media", base, file_id);
+        Url::parse(&url_str).map_err(|e| Error::Generic(format!("failed to build upload url: {e}")))
+    }
+
     fn map_http_error(status: StatusCode, body_snippet: &str, context: &str) -> Error {
         match status {
             StatusCode::NOT_FOUND => Error::NotFound(context.to_string()),
@@ -130,17 +142,44 @@ impl Storage for GoogleDriveStorage {
 
     async fn put<R: AsyncRead + Send + Sync + Unpin>(
         &self,
-        _id: Self::Id,
-        _input: R,
-        _len: Option<u64>,
+        id: Self::Id,
+        mut input: R,
+        len: Option<u64>,
     ) -> Result<()> {
-        // Native IDs are assigned by Drive on create.
-        // Updating content by fileId is done via PATCH upload.
-        //
-        // Pending implementation of streaming body support.
-        Err(Error::Generic(
-            "GoogleDriveStorage::put is not implemented yet (requires decision on update vs create semantics)".to_string(),
-        ))
+        // Update existing file content by ID using the upload endpoint
+        let url = self.upload_url(&id)?;
+        let headers = self.auth_headers().await?;
+
+        // Read data into memory
+        // Google Drive API requires knowing content length for uploads
+        let mut data = Vec::new();
+        tokio::io::copy(&mut input, &mut data)
+            .await
+            .map_err(|e| Error::Io(e))?;
+
+        let mut request = self
+            .client
+            .patch(url)
+            .headers(headers)
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(data);
+
+        if let Some(len) = len {
+            request = request.header("Content-Length", len.to_string());
+        }
+
+        let resp = request
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(Self::map_http_error(status, &text, "gdrive put failed"))
+        }
     }
 
     async fn get_into<W: AsyncWrite + Send + Sync + Unpin>(

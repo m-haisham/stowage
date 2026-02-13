@@ -1,6 +1,6 @@
 use crate::{Error, Result, Storage};
 use futures::stream::{BoxStream, StreamExt};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Client, StatusCode, Url};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -12,6 +12,11 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 ///
 /// # Auth
 /// Requires a valid OAuth2 access token with `Files.ReadWrite` (or similar) scope.
+///
+/// # Put Semantics
+/// The `put` operation updates an existing file's content by its item ID.
+/// To create new files, you would need to use the OneDrive API directly
+/// to create the file and obtain its item ID first.
 #[derive(Clone, Debug)]
 pub struct OneDriveStorage {
     client: Client,
@@ -126,20 +131,45 @@ impl Storage for OneDriveStorage {
 
     async fn put<R: AsyncRead + Send + Sync + Unpin>(
         &self,
-        _id: Self::Id,
-        _input: R,
-        _len: Option<u64>,
+        id: Self::Id,
+        mut input: R,
+        len: Option<u64>,
     ) -> Result<()> {
-        // Native IDs usually imply updating an existing resource.
+        // Update existing file content by item ID
         // PUT /me/drive/items/{item-id}/content
-        //
-        // NOTE: This implementation buffers the stream because reqwest::Body
-        // from a reader is not trivial without 'static bounds or specific dependencies.
-        // Ideally, we'd use a stream body.
-        Err(Error::Generic(
-            "OneDriveStorage::put not implemented yet (requires streaming body support)"
-                .to_string(),
-        ))
+        let url = self.content_url(&id)?;
+        let headers = self.auth_headers().await?;
+
+        // Read data into memory
+        // OneDrive API works well with buffered uploads for small-medium files
+        let mut data = Vec::new();
+        tokio::io::copy(&mut input, &mut data)
+            .await
+            .map_err(|e| Error::Io(e))?;
+
+        let mut request = self
+            .client
+            .put(url)
+            .headers(headers)
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(data);
+
+        if let Some(len) = len {
+            request = request.header("Content-Length", len.to_string());
+        }
+
+        let resp = request
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            Err(Self::map_http_error(status, &text, "onedrive put failed"))
+        }
     }
 
     async fn get_into<W: AsyncWrite + Send + Sync + Unpin>(
