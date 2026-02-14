@@ -25,8 +25,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 3: Composed - Fallback with Mirror
     example_3_fallback_with_mirror().await?;
 
-    // Example 4: Advanced Composition
-    example_4_advanced_composition().await?;
+    // Example 4: Read-Only Storage
+    example_4_readonly().await?;
+
+    // Example 5: Mirror Error Details
+    example_5_mirror_error_details().await?;
+
+    // Example 6: Advanced Composition
+    example_6_advanced_composition().await?;
 
     println!("\n=== All examples completed successfully! ===");
     Ok(())
@@ -83,7 +89,7 @@ async fn example_2_simple_mirror() -> Result<(), Box<dyn std::error::Error>> {
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
-        .write_strategy(WriteStrategy::AllOrFail)
+        .write_strategy(WriteStrategy::AllOrFail { rollback: false })
         .build();
 
     // Write to all backends in parallel
@@ -125,7 +131,7 @@ async fn example_3_fallback_with_mirror() -> Result<(), Box<dyn std::error::Erro
     let mirrored_primary = MirrorStorage::builder()
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
-        .write_strategy(WriteStrategy::Quorum) // At least 2 of 2 must succeed
+        .write_strategy(WriteStrategy::Quorum)
         .build();
 
     // Create a local cache as fallback
@@ -185,13 +191,87 @@ async fn example_3_fallback_with_mirror() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// Example 4: Advanced Composition with Local and Memory Storage
+/// Example 4: Read-Only Storage
+///
+/// Demonstrates wrapping storage to prevent writes.
+async fn example_4_readonly() -> Result<(), Box<dyn std::error::Error>> {
+    println!("--- Example 4: Read-Only Storage ---");
+
+    use stowage::multi::ReadOnlyStorage;
+
+    let inner = MemoryStorage::new();
+    inner
+        .put_bytes("readonly-file.txt".to_string(), b"Cannot modify this")
+        .await?;
+
+    let storage = ReadOnlyStorage::new(inner);
+
+    // Reads work fine
+    let data = storage.get_string(&"readonly-file.txt".to_string()).await?;
+    println!("  Read data: {}", data);
+
+    // Writes are rejected
+    let result = storage.put_bytes("new.txt".to_string(), b"data").await;
+    assert!(result.is_err());
+    println!("  ✓ Write operation blocked");
+
+    // Can compose with other patterns
+    let fallback_readonly = FallbackStorage::new(
+        ReadOnlyStorage::new(MemoryStorage::new()),
+        MemoryStorage::new(),
+    );
+    println!("  ✓ Read-only storage can be composed\n");
+
+    let _ = fallback_readonly; // Suppress unused warning
+    Ok(())
+}
+
+/// Example 5: Mirror Error Details
+///
+/// Demonstrates detailed error reporting on mirror failures.
+async fn example_5_mirror_error_details() -> Result<(), Box<dyn std::error::Error>> {
+    println!("--- Example 5: Mirror Error Details ---");
+
+    use stowage::Error;
+
+    let storage = MirrorStorage::builder()
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .write_strategy(WriteStrategy::AllOrFail { rollback: false })
+        .build();
+
+    // Normal write succeeds
+    storage.put_bytes("test.txt".to_string(), b"data").await?;
+    println!("  ✓ Write to all backends succeeded");
+
+    // When a mirror operation fails, Error::MirrorFailure provides:
+    // - Which backends succeeded (indices)
+    // - Which backends failed (indices + error messages)
+    // - Success/failure counts
+    println!("  ✓ Mirror errors include detailed backend status");
+
+    // With rollback enabled, failed writes are automatically cleaned up
+    let storage_with_rollback = MirrorStorage::builder()
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .write_strategy(WriteStrategy::AllOrFail { rollback: true })
+        .build();
+
+    storage_with_rollback
+        .put_bytes("file.txt".to_string(), b"test")
+        .await?;
+    println!("  ✓ Rollback enabled for atomic operations\n");
+
+    Ok(())
+}
+
+/// Example 6: Advanced Composition with Local and Memory Storage
 ///
 /// Demonstrates a realistic multi-tier storage architecture:
 /// - Tier 1: Fast in-memory cache (mirror for redundancy)
 /// - Tier 2: Persistent local storage fallback
-async fn example_4_advanced_composition() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- Example 4: Advanced Multi-Tier Architecture ---");
+async fn example_6_advanced_composition() -> Result<(), Box<dyn std::error::Error>> {
+    println!("--- Example 6: Advanced Multi-Tier Architecture ---");
 
     // Create temporary directories for local storage
     let temp1 = TempDir::new()?;
@@ -213,7 +293,7 @@ async fn example_4_advanced_composition() -> Result<(), Box<dyn std::error::Erro
     let tier1_mirror = MirrorStorage::builder()
         .add_backend(LocalStorage::new(temp1.path()))
         .add_backend(LocalStorage::new(temp2.path()))
-        .write_strategy(WriteStrategy::AllOrFail)
+        .write_strategy(WriteStrategy::AllOrFail { rollback: true })
         .build();
 
     // Tier 2: Fallback storage (older/archived data)

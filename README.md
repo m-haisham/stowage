@@ -25,6 +25,11 @@ A single `Storage` trait works across all backends:
 - **Local filesystem** (`local` feature)
 - **In-memory storage** (`memory` feature)
 
+### Multi-Storage Patterns
+- **FallbackStorage** - Automatic failover to secondary backend
+- **MirrorStorage** - Parallel writes to multiple backends for redundancy
+- **ReadOnlyStorage** - Enforce read-only access to any backend
+
 ## Installation
 
 Add stowage to your `Cargo.toml`:
@@ -222,6 +227,88 @@ Convenience methods built on `Storage`:
 - `get_string` - Download as UTF-8 string
 - `put_bytes` - Upload from byte slice
 - `copy_to` - Copy between storage backends
+
+## Multi-Storage Patterns
+
+Compose multiple backends for complex architectures:
+
+### FallbackStorage
+
+Automatic failover to secondary storage:
+
+```rust
+use stowage::multi::FallbackStorage;
+use stowage::{LocalStorage, Storage, StorageExt};
+
+let storage = FallbackStorage::new(
+    LocalStorage::new("/primary"),
+    LocalStorage::new("/backup"),
+);
+
+// Reads from primary, falls back to backup if not found
+let data = storage.get_bytes(&"file.txt".to_string()).await?;
+```
+
+### MirrorStorage
+
+Replicate data across multiple backends:
+
+```rust
+use stowage::multi::{MirrorStorage, WriteStrategy};
+use stowage::{LocalStorage, Storage, StorageExt};
+
+let storage = MirrorStorage::builder()
+    .add_backend(LocalStorage::new("/storage-1"))
+    .add_backend(LocalStorage::new("/storage-2"))
+    .write_strategy(WriteStrategy::AllOrFail { rollback: true })
+    .build();
+
+// Writes to all backends sequentially
+// On partial failure with rollback=true, successful writes are deleted
+storage.put_bytes("file.txt".to_string(), b"data").await?;
+```
+
+Write strategies:
+- `AllOrFail { rollback: bool }` - All must succeed or fail (optionally rollback)
+- `AtLeastOne` - Succeed if any backend succeeds
+- `Quorum` - Majority must succeed
+
+On failure, `Error::MirrorFailure` provides:
+- Which backends succeeded (indices)
+- Which backends failed (indices + error messages)
+
+### ReadOnlyStorage
+
+Prevent all write operations:
+
+```rust
+use stowage::multi::ReadOnlyStorage;
+use stowage::{MemoryStorage, Storage, StorageExt};
+
+let storage = ReadOnlyStorage::new(MemoryStorage::new());
+
+// Reads work fine
+let data = storage.get_bytes(&"file.txt".to_string()).await;
+
+// Writes are rejected
+assert!(storage.put_bytes("file.txt".to_string(), b"data").await.is_err());
+```
+
+### Composing Patterns
+
+All patterns implement `Storage` and can be composed:
+
+```rust
+use stowage::multi::{FallbackStorage, MirrorStorage, WriteStrategy};
+
+// Mirrored primary with fallback cache
+let mirror = MirrorStorage::builder()
+    .add_backend(LocalStorage::new("/storage-1"))
+    .add_backend(LocalStorage::new("/storage-2"))
+    .build();
+
+let storage = FallbackStorage::new(mirror, LocalStorage::new("/cache"));
+```
 
 ## Security
 

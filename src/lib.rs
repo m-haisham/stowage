@@ -23,6 +23,16 @@ pub enum Error {
 
     #[error("Generic storage error: {0}")]
     Generic(String),
+
+    #[error("Mirror operation failed: {success_count} succeeded, {failure_count} failed")]
+    MirrorFailure {
+        success_count: usize,
+        failure_count: usize,
+        /// Indices of backends that succeeded
+        successes: Vec<usize>,
+        /// Indices and error messages of backends that failed
+        failures: Vec<(usize, String)>,
+    },
 }
 
 /// Adapter modules, gated behind Cargo features.

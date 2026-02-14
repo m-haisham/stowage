@@ -3,57 +3,10 @@ use futures::stream::BoxStream;
 use std::fmt::Debug;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-/// Storage adapter that automatically falls back to a secondary backend when the primary fails.
+/// Automatically falls back to secondary storage when primary fails.
 ///
-/// This adapter attempts operations on the primary storage first. If the primary returns
-/// an error (especially `NotFound`), it automatically tries the secondary storage.
-///
-/// # Write Behavior
-///
-/// By default, writes only go to the primary storage. This is suitable for:
-/// - Migration scenarios (write to new storage, read from old as fallback)
-/// - Cache-aside patterns (write to cache, read from backing store as fallback)
-///
-/// Use [`FallbackStorage::with_write_through`] to write to both backends.
-///
-/// # Examples
-///
-/// ```no_run
-/// use stowage::{LocalStorage, Storage, StorageExt};
-/// use stowage::multi::FallbackStorage;
-///
-/// # async fn example() -> stowage::Result<()> {
-/// let primary = LocalStorage::new("/fast-ssd");
-/// let secondary = LocalStorage::new("/slow-hdd");
-///
-/// let storage = FallbackStorage::new(primary, secondary);
-///
-/// // Write to primary only
-/// storage.put_bytes("file.txt".to_string(), b"data").await?;
-///
-/// // Read tries primary first, then secondary
-/// let data = storage.get_bytes(&"file.txt".to_string()).await?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Write-Through Mode
-///
-/// ```no_run
-/// # use stowage::{LocalStorage, Storage, StorageExt};
-/// # use stowage::multi::FallbackStorage;
-/// # async fn example() -> stowage::Result<()> {
-/// let primary = LocalStorage::new("/primary");
-/// let secondary = LocalStorage::new("/backup");
-///
-/// let storage = FallbackStorage::new(primary, secondary)
-///     .with_write_through(true);
-///
-/// // Writes to both primary and secondary
-/// storage.put_bytes("file.txt".to_string(), b"data").await?;
-/// # Ok(())
-/// # }
-/// ```
+/// Writes go to primary only by default. Use [`with_write_through`](Self::with_write_through)
+/// to write to both backends.
 #[derive(Debug)]
 pub struct FallbackStorage<P, S>
 where
@@ -70,10 +23,7 @@ where
     P: Storage,
     S: Storage<Id = P::Id>,
 {
-    /// Create a new fallback storage with primary and secondary backends.
-    ///
-    /// By default, writes only go to the primary. Use [`with_write_through`](Self::with_write_through)
-    /// to enable writing to both backends.
+    /// Create fallback storage with primary and secondary backends.
     pub fn new(primary: P, secondary: S) -> Self {
         Self {
             primary,
@@ -82,10 +32,7 @@ where
         }
     }
 
-    /// Enable or disable write-through to the secondary backend.
-    ///
-    /// When enabled, `put` operations write to both primary and secondary.
-    /// When disabled (default), `put` only writes to primary.
+    /// Enable/disable write-through to secondary (default: disabled).
     pub fn with_write_through(mut self, enabled: bool) -> Self {
         self.write_through = enabled;
         self
@@ -101,7 +48,7 @@ where
         &self.secondary
     }
 
-    /// Check if write-through is enabled.
+    /// Returns true if write-through is enabled.
     pub fn is_write_through(&self) -> bool {
         self.write_through
     }
@@ -190,13 +137,8 @@ where
         id: &Self::Id,
         output: W,
     ) -> Result<u64> {
-        // For fallback storage, get_into has a limitation:
-        // Once we try the primary and it fails, we can't retry with secondary
-        // because the output stream was already consumed.
-        //
-        // Recommendation: Use get_bytes() for fallback scenarios instead.
-        //
-        // For now, we only try primary to avoid the moved value issue.
+        // Note: get_into only tries primary due to stream consumption.
+        // Use get_bytes() for fallback on reads.
         self.primary.get_into(id, output).await
     }
 
@@ -254,8 +196,6 @@ mod tests {
             .unwrap();
         assert_eq!(data, "primary data");
 
-        // Note: get_into doesn't support fallback due to stream consumption,
-        // but get_bytes (which uses a duplex stream internally) handles it
         let data = storage
             .get_bytes(&"only-in-secondary".to_string())
             .await
