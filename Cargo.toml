@@ -7,34 +7,36 @@ edition = "2024"
 default = []
 
 # Backends / adapters (kept in `src/adapters/`).
-memory = ["dep:tokio"]
-local = ["dep:tokio", "dep:tokio-util", "dep:bytes"]
-s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-smithy-types", "dep:bytes", "dep:tokio", "dep:tokio-util"]
+memory = []
+local = ["dep:tokio-util", "dep:bytes"]
+s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-smithy-types", "dep:bytes", "dep:tokio-util"]
 
 # Cloud drive adapters (native item IDs).
 # NOTE: These require OAuth2 tokens and additional wiring in code.
-gdrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio", "dep:tokio-util"]
-onedrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio", "dep:tokio-util"]
-dropbox = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio", "dep:tokio-util"]
-box_storage = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio", "dep:tokio-util"]
+gdrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio-util"]
+onedrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio-util"]
+dropbox = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio-util"]
+box_storage = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio-util"]
 
 # Cloud storage platforms
-azure = ["dep:reqwest", "dep:bytes", "dep:tokio", "dep:tokio-util", "dep:urlencoding"]
-webdav = ["dep:reqwest", "dep:bytes", "dep:tokio", "dep:tokio-util", "dep:urlencoding"]
+azure = ["dep:reqwest", "dep:bytes", "dep:tokio-util", "dep:urlencoding"]
+webdav = ["dep:reqwest", "dep:bytes", "dep:tokio-util", "dep:urlencoding"]
 
 # File transfer protocols
-sftp = ["dep:ssh2", "dep:tokio", "dep:tokio-util", "dep:bytes"]
-ftp = ["dep:suppaftp", "dep:tokio", "dep:tokio-util", "dep:bytes"]
+sftp = ["dep:ssh2", "dep:tokio-util", "dep:bytes"]
+ftp = ["dep:suppaftp", "dep:tokio-util", "dep:bytes"]
 
 [dependencies]
 futures = "0.3.31"
 thiserror = "2.0.18"
 
+# Tokio - required for core Storage trait (AsyncRead/AsyncWrite) and StorageExt helpers
+tokio = { version = "1.43.0", features = ["io-util", "macros"] }
+
 # Common optional utilities for adapters
 bytes = { version = "1.10.0", optional = true }
 
-# Tokio runtime + helpers (local/fs + stream adapters)
-tokio = { version = "1.43.0", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync"], optional = true }
+# Tokio utilities for adapters
 tokio-util = { version = "0.7.13", features = ["io"], optional = true }
 
 # AWS S3 (official AWS SDK)
@@ -59,4 +61,4 @@ suppaftp = { version = "6.0", features = ["async", "async-native-tls"], optional
 
 [dev-dependencies]
 tempfile = "3.13.0"
-tokio = { version = "1.43.0", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1.43.0", features = ["full"] }
