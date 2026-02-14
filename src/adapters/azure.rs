@@ -93,6 +93,41 @@ impl Storage for AzureStorage {
         Ok(response.status().is_success())
     }
 
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        // In Azure Blob Storage, folders don't exist as entities - they're just prefixes
+        // Check if any blobs exist with this prefix
+        let mut prefix = id.clone();
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+
+        let url = format!(
+            "{}?restype=container&comp=list&prefix={}&maxresults=1&{}",
+            self.base_url,
+            urlencoding::encode(&prefix),
+            self.sas_token.expose_secret()
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        if !response.status().is_success() {
+            return Err(self.map_status_error(response.status(), &prefix));
+        }
+
+        let body = response
+            .text()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        // Check if the XML response contains any blobs
+        Ok(body.contains("<Blob>"))
+    }
+
     async fn put<R: AsyncRead + Send + Sync + Unpin>(
         &self,
         id: Self::Id,

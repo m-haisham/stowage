@@ -88,6 +88,56 @@ impl OneDriveStorage {
             _ => Error::Generic(format!("{context}: {status} ({body_snippet})")),
         }
     }
+
+    /// Get a folder's ID by its path.
+    ///
+    /// The path should be relative to the root (e.g., "Documents/Work").
+    /// Returns the folder ID if found, or an error if not found.
+    ///
+    /// Note: OneDrive supports path-based addressing via the API.
+    pub async fn get_folder_id_by_path(&self, path: &str) -> Result<String> {
+        let headers = self.auth_headers().await?;
+
+        // OneDrive supports path-based item access
+        let url = self
+            .base_url
+            .join(&format!("me/drive/root:/{path}"))
+            .map_err(|e| Error::Generic(format!("failed to build path url: {e}")))?;
+
+        let resp = self
+            .client
+            .get(url)
+            .headers(headers)
+            .query(&[("select", "id")])
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        match resp.status() {
+            StatusCode::OK => {
+                let text = resp.text().await.unwrap_or_default();
+                // Extract ID from JSON response
+                if let Some(start) = text.find(r#""id":"#) {
+                    let after_id = &text[start + 6..];
+                    if let Some(end) = after_id.find('"') {
+                        return Ok(after_id[..end].to_string());
+                    }
+                }
+                Err(Error::Generic(
+                    "Failed to parse folder ID from response".to_string(),
+                ))
+            }
+            StatusCode::NOT_FOUND => Err(Error::NotFound(path.to_string())),
+            status => {
+                let text = resp.text().await.unwrap_or_default();
+                Err(Self::map_http_error(
+                    status,
+                    &text,
+                    "get folder id by path failed",
+                ))
+            }
+        }
+    }
 }
 
 impl Storage for OneDriveStorage {
@@ -115,6 +165,37 @@ impl Storage for OneDriveStorage {
                     status,
                     &text,
                     "onedrive exists failed",
+                ))
+            }
+        }
+    }
+
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        let url = self.item_url(id)?;
+        let headers = self.auth_headers().await?;
+
+        // Check if the item exists and has a folder property
+        let resp = self
+            .client
+            .get(url)
+            .headers(headers)
+            .query(&[("select", "id,folder")])
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        match resp.status() {
+            StatusCode::OK => {
+                let text = resp.text().await.unwrap_or_default();
+                Ok(text.contains("\"folder\""))
+            }
+            StatusCode::NOT_FOUND => Ok(false),
+            status => {
+                let text = resp.text().await.unwrap_or_default();
+                Err(Self::map_http_error(
+                    status,
+                    &text,
+                    "onedrive folder_exists failed",
                 ))
             }
         }

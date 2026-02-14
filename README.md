@@ -66,6 +66,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("File exists!");
     }
 
+    // Check if folder exists
+    if storage.folder_exists(&"uploads".to_string()).await? {
+        println!("Folder exists!");
+    }
+
     // List files
     let files = storage.list(None).await?;
     use futures::stream::StreamExt;
@@ -169,10 +174,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 All adapters implement the `Storage` trait with methods for:
 - `exists` - Check if an item exists
+- `folder_exists` - Check if a folder/directory exists
 - `put` - Store data from an `AsyncRead` stream
 - `get_into` - Retrieve data to an `AsyncWrite` stream
 - `delete` - Remove an item
 - `list` - List items with optional prefix filtering
+
+### Path-Based vs ID-Based Adapters
+
+**Path-based adapters** use string paths as identifiers:
+- Local, S3, Azure, WebDAV, SFTP, FTP, Dropbox
+
+**ID-based adapters** use native item IDs:
+- Google Drive, OneDrive, Box
+
+For ID-based adapters, you must resolve paths to IDs before calling storage methods. 
+Each adapter provides helper methods:
+
+```rust
+// Google Drive - find folder by name
+let folder_id = storage.find_folder_by_name("Documents", None).await?;
+if let Some(id) = folder_id {
+    if storage.folder_exists(&id).await? {
+        println!("Folder exists!");
+    }
+}
+
+// OneDrive - get folder ID by path
+let folder_id = storage.get_folder_id_by_path("Documents/Work").await?;
+if storage.folder_exists(&folder_id).await? {
+    println!("Folder exists!");
+}
+
+// Box - find folder by name in parent folder
+let folder_id = storage.find_folder_by_name("Projects").await?;
+if let Some(id) = folder_id {
+    if storage.folder_exists(&id).await? {
+        println!("Folder exists!");
+    }
+}
+```
 
 ### StorageExt
 

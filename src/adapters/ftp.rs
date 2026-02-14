@@ -160,6 +160,24 @@ impl Storage for FtpStorage {
         }
     }
 
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        let path = self.full_path(id);
+        let mut stream = self.stream.lock().await;
+
+        // Try to change to the directory
+        match stream.cwd(&path).await {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                let error_msg = e.to_string();
+                if Self::is_not_found_error(&error_msg) {
+                    Ok(false)
+                } else {
+                    Err(Error::Generic(format!("Failed to check folder: {}", e)))
+                }
+            }
+        }
+    }
+
     async fn put<R: AsyncRead + Send + Sync + Unpin>(
         &self,
         id: Self::Id,

@@ -69,6 +69,36 @@ impl Storage for S3Storage {
         }
     }
 
+    fn folder_exists(
+        &self,
+        id: &Self::Id,
+    ) -> impl std::future::Future<Output = Result<bool>> + Send {
+        let client = self.client.clone();
+        let bucket = self.bucket.clone();
+        let mut prefix = id.clone();
+
+        async move {
+            Self::validate_key(&prefix)?;
+
+            // In S3, folders don't exist as objects - they're just prefixes
+            // Check if any objects exist with this prefix
+            if !prefix.ends_with('/') {
+                prefix.push('/');
+            }
+
+            let resp = client
+                .list_objects_v2()
+                .bucket(bucket)
+                .prefix(prefix)
+                .max_keys(1)
+                .send()
+                .await
+                .map_err(Self::map_sdk_err)?;
+
+            Ok(resp.key_count().unwrap_or(0) > 0)
+        }
+    }
+
     fn put<I: AsyncRead + Send + Sync + Unpin>(
         &self,
         id: Self::Id,

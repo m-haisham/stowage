@@ -186,6 +186,25 @@ impl Storage for SftpStorage {
         .await
     }
 
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        let path = self.full_path(id);
+
+        self.with_sftp(move |sftp| match sftp.stat(&path) {
+            Ok(stat) => Ok(stat.is_dir()),
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("no such file")
+                    || error_msg.contains("LIBSSH2_FX_NO_SUCH_FILE")
+                {
+                    Ok(false)
+                } else {
+                    Err(Error::Generic(format!("SFTP stat failed: {}", e)))
+                }
+            }
+        })
+        .await
+    }
+
     async fn put<R: AsyncRead + Send + Sync + Unpin>(
         &self,
         id: Self::Id,

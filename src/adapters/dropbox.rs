@@ -128,6 +128,36 @@ impl Storage for DropboxStorage {
         }
     }
 
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        let path = Self::ensure_path_format(id);
+
+        let request_body = DropboxPath { path: path.clone() };
+
+        let response = self
+            .client
+            .post(&format!("{}/files/get_metadata", Self::API_URL))
+            .header(AUTHORIZATION, self.auth_header())
+            .header(CONTENT_TYPE, "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        let status = response.status();
+        match status {
+            StatusCode::OK => {
+                let body = response.text().await.unwrap_or_default();
+                // Check if the metadata indicates it's a folder
+                Ok(body.contains("\"folder\""))
+            }
+            StatusCode::NOT_FOUND => Ok(false),
+            _ => {
+                let body = response.text().await.unwrap_or_default();
+                Err(self.map_error(status, &path, &body))
+            }
+        }
+    }
+
     async fn put<R: AsyncRead + Send + Sync + Unpin>(
         &self,
         id: Self::Id,

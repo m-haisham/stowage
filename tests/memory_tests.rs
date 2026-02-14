@@ -520,3 +520,74 @@ async fn test_binary_data() {
     let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
 }
+
+#[tokio::test]
+async fn test_folder_exists_with_trailing_slash() {
+    let storage = MemoryStorage::new();
+
+    // Create files under "folder/"
+    storage
+        .put_bytes("folder/file1.txt".to_string(), b"data1")
+        .await
+        .unwrap();
+    storage
+        .put_bytes("folder/file2.txt".to_string(), b"data2")
+        .await
+        .unwrap();
+
+    // Check folder exists (with trailing slash)
+    assert!(storage.folder_exists(&"folder/".to_string()).await.unwrap());
+
+    // Check folder exists (without trailing slash)
+    assert!(storage.folder_exists(&"folder".to_string()).await.unwrap());
+}
+
+#[tokio::test]
+async fn test_folder_exists_nonexistent() {
+    let storage = MemoryStorage::new();
+
+    // Create some files
+    storage
+        .put_bytes("docs/readme.txt".to_string(), b"data")
+        .await
+        .unwrap();
+
+    // Check non-existent folder
+    assert!(!storage.folder_exists(&"images".to_string()).await.unwrap());
+    assert!(!storage.folder_exists(&"images/".to_string()).await.unwrap());
+}
+
+#[tokio::test]
+async fn test_folder_exists_nested() {
+    let storage = MemoryStorage::new();
+
+    // Create nested structure
+    storage
+        .put_bytes("root/level1/level2/file.txt".to_string(), b"data")
+        .await
+        .unwrap();
+
+    // All parent folders should exist
+    assert!(storage.folder_exists(&"root".to_string()).await.unwrap());
+    assert!(
+        storage
+            .folder_exists(&"root/level1".to_string())
+            .await
+            .unwrap()
+    );
+    assert!(
+        storage
+            .folder_exists(&"root/level1/level2".to_string())
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn test_folder_exists_empty_storage() {
+    let storage = MemoryStorage::new();
+
+    // No folders should exist in empty storage
+    assert!(!storage.folder_exists(&"any".to_string()).await.unwrap());
+    assert!(!storage.folder_exists(&"folder/".to_string()).await.unwrap());
+}

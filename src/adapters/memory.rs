@@ -67,6 +67,17 @@ impl Storage for MemoryStorage {
         Ok(map.contains_key(id))
     }
 
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        // In memory storage, folders are represented by prefixes
+        let map = self.inner.read().expect("poisoned lock");
+        let prefix = if id.ends_with('/') {
+            id.clone()
+        } else {
+            format!("{}/", id)
+        };
+        Ok(map.keys().any(|key| key.starts_with(&prefix)))
+    }
+
     async fn put<I>(&self, id: Self::Id, mut input: I, _len: Option<u64>) -> Result<()>
     where
         I: tokio::io::AsyncRead + Send + Unpin,

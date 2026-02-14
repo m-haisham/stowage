@@ -50,6 +50,43 @@ impl BoxStorage {
         format!("Bearer {}", self.access_token.expose_secret())
     }
 
+    /// Find a folder by name in the configured parent folder.
+    ///
+    /// Returns the folder ID if found, or `None` if not found.
+    ///
+    /// Note: This searches within the current parent folder only.
+    /// If multiple folders have the same name, only the first is returned.
+    pub async fn find_folder_by_name(&self, name: &str) -> Result<Option<String>> {
+        let url = format!("{}/folders/{}/items", Self::API_URL, self.parent_folder_id);
+
+        let response = self
+            .client
+            .get(&url)
+            .header(AUTHORIZATION, self.auth_header())
+            .query(&[("limit", "1000"), ("fields", "id,type,name")])
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(self.map_error(status, &self.parent_folder_id, &body));
+        }
+
+        let items: BoxFolderItems = response
+            .json()
+            .await
+            .map_err(|e| Error::Generic(format!("failed to parse Box response: {e}")))?;
+
+        // Find folder with matching name
+        Ok(items
+            .entries
+            .into_iter()
+            .find(|item| item.item_type == "folder" && item.name == name)
+            .map(|item| item.id))
+    }
+
     fn map_error(&self, status: StatusCode, context: &str, body: &str) -> Error {
         match status {
             StatusCode::NOT_FOUND => Error::NotFound(context.to_string()),
@@ -193,6 +230,28 @@ impl Storage for BoxStorage {
 
     async fn exists(&self, id: &Self::Id) -> Result<bool> {
         let url = format!("{}/files/{}", Self::API_URL, id);
+
+        let response = self
+            .client
+            .get(&url)
+            .header(AUTHORIZATION, self.auth_header())
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        match response.status() {
+            StatusCode::OK => Ok(true),
+            StatusCode::NOT_FOUND => Ok(false),
+            status => {
+                let body = response.text().await.unwrap_or_default();
+                Err(self.map_error(status, id, &body))
+            }
+        }
+    }
+
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        // In Box, folders have their own endpoint
+        let url = format!("{}/folders/{}", Self::API_URL, id);
 
         let response = self
             .client

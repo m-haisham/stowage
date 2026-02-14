@@ -110,6 +110,36 @@ impl Storage for WebDAVStorage {
         Ok(response.status().is_success())
     }
 
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        let url = self.resource_url(id);
+
+        // Use PROPFIND to check if it's a collection (directory)
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &url)
+            .basic_auth(&self.username, Some(self.password.expose_secret()))
+            .header("Depth", "0")
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+
+        if !response.status().is_success() {
+            return Ok(false);
+        }
+
+        // Check if the response indicates it's a collection
+        let body = response
+            .text()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        Ok(body.contains("<d:collection/>") || body.contains("collection"))
+    }
+
     async fn put<R: AsyncRead + Send + Sync + Unpin>(
         &self,
         id: Self::Id,

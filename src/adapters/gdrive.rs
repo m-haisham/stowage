@@ -99,6 +99,65 @@ impl GoogleDriveStorage {
             _ => Error::Generic(format!("{context}: {status} ({body_snippet})")),
         }
     }
+
+    /// Find a folder by name in a specific parent folder.
+    ///
+    /// Returns the folder ID if found, or `None` if not found.
+    /// If `parent_id` is `None`, searches in the root.
+    ///
+    /// Note: This performs a search and returns the first match.
+    /// If multiple folders have the same name, only the first is returned.
+    pub async fn find_folder_by_name(
+        &self,
+        name: &str,
+        parent_id: Option<&str>,
+    ) -> Result<Option<String>> {
+        let headers = self.auth_headers().await?;
+
+        // Build query: name matches and is a folder
+        let mut query = format!(
+            "name = '{}' and mimeType = 'application/vnd.google-apps.folder'",
+            name.replace("'", "\\'")
+        );
+
+        if let Some(parent) = parent_id {
+            query.push_str(&format!(" and '{}' in parents", parent.replace("'", "\\'")));
+        }
+
+        let resp = self
+            .client
+            .get(
+                self.base_url
+                    .join("files")
+                    .map_err(|e| Error::Generic(format!("failed to build search url: {e}")))?,
+            )
+            .headers(headers)
+            .query(&[("q", &query), ("fields", &"files(id)".to_string())])
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Self::map_http_error(status, &text, "gdrive search failed"));
+        }
+
+        let text = resp.text().await.unwrap_or_default();
+
+        // Parse JSON to extract the first file ID
+        if text.contains("\"files\"") {
+            // Simple extraction - look for first "id" field
+            if let Some(start) = text.find(r#""id":"#) {
+                let after_id = &text[start + 6..];
+                if let Some(end) = after_id.find('"') {
+                    return Ok(Some(after_id[..end].to_string()));
+                }
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 impl Storage for GoogleDriveStorage {
@@ -124,6 +183,37 @@ impl Storage for GoogleDriveStorage {
             status => {
                 let text = resp.text().await.unwrap_or_default();
                 Err(Self::map_http_error(status, &text, "gdrive exists failed"))
+            }
+        }
+    }
+
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        let url = self.file_url(id)?;
+        let headers = self.auth_headers().await?;
+
+        // Check if the item exists and is a folder by checking mimeType
+        let resp = self
+            .client
+            .get(url)
+            .headers(headers)
+            .query(&[("fields", "id,mimeType")])
+            .send()
+            .await
+            .map_err(|e| Error::Connection(Box::new(e)))?;
+
+        match resp.status() {
+            StatusCode::OK => {
+                let text = resp.text().await.unwrap_or_default();
+                Ok(text.contains("application/vnd.google-apps.folder"))
+            }
+            StatusCode::NOT_FOUND => Ok(false),
+            status => {
+                let text = resp.text().await.unwrap_or_default();
+                Err(Self::map_http_error(
+                    status,
+                    &text,
+                    "gdrive folder_exists failed",
+                ))
             }
         }
     }

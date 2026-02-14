@@ -126,8 +126,17 @@ impl Storage for LocalStorage {
 
     async fn exists(&self, id: &Self::Id) -> Result<bool> {
         let path = self.path_for_id(id)?;
-        match tokio::fs::metadata(path).await {
+        match tokio::fs::metadata(&path).await {
             Ok(md) => Ok(md.is_file()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        let path = self.path_for_id(id)?;
+        match tokio::fs::metadata(&path).await {
+            Ok(md) => Ok(md.is_dir()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(e) => Err(e.into()),
         }

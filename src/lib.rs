@@ -80,12 +80,32 @@ pub use adapters::webdav::*;
 ///
 /// Uses Tokio's [`AsyncRead`] and [`AsyncWrite`].
 /// `Id` is an associated type allowing adapters to choose their identifier format.
+///
+/// ## Identifier Types
+/// - **Path-based**: Local, S3, Azure, WebDAV, SFTP, FTP, Dropbox use string paths
+/// - **ID-based**: Google Drive, OneDrive, Box use native item IDs
+///
+/// For ID-based adapters, you must resolve paths to IDs using the native API before
+/// calling storage methods.
 pub trait Storage: Send + Sync + Debug {
     /// The identifier type for this storage backend.
     type Id: Clone + Debug + Send + Sync + 'static;
 
     /// Check if an item exists.
     fn exists(&self, id: &Self::Id) -> impl std::future::Future<Output = Result<bool>> + Send;
+
+    /// Check if a folder exists.
+    ///
+    /// **Path-based backends** (Local, S3, Azure, WebDAV, SFTP, FTP, Dropbox):
+    /// Pass the folder path as a string.
+    ///
+    /// **ID-based backends** (Google Drive, OneDrive, Box):
+    /// Pass the folder's ID. To resolve a path to an ID, use the adapter's native API
+    /// or search functionality.
+    fn folder_exists(
+        &self,
+        id: &Self::Id,
+    ) -> impl std::future::Future<Output = Result<bool>> + Send;
 
     /// Store data. `len` is optional and may be used by some backends.
     fn put<R: AsyncRead + Send + Sync + Unpin>(
