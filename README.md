@@ -273,9 +273,27 @@ Write strategies:
 - `AtLeastOne` - Succeed if any backend succeeds
 - `Quorum` - Majority must succeed
 
-On failure, `Error::MirrorFailure` provides:
-- Which backends succeeded (indices)
-- Which backends failed (indices + error messages)
+On failure, `Error::MirrorFailure(details)` provides detailed information:
+
+```rust
+// Error contains MirrorFailureDetails with:
+match storage.put_bytes(...).await {
+    Err(Error::MirrorFailure(details)) => {
+        // Access fields:
+        details.successes          // Vec<usize> of successful backend indices
+        details.failures           // Vec<(usize, Box<Error>)> of failed backends
+        details.rollback_errors    // Vec<(usize, Box<Error>)> if rollback occurred
+        
+        // Helper methods:
+        details.success_count()    // Number of successes
+        details.failure_count()    // Number of failures
+        details.total_backends()   // Total backends
+        details.has_rollback_errors()
+        details.failed_indices()
+    }
+    _ => {}
+}
+```
 
 ### ReadOnlyStorage
 

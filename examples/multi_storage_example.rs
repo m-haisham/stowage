@@ -232,8 +232,6 @@ async fn example_4_readonly() -> Result<(), Box<dyn std::error::Error>> {
 async fn example_5_mirror_error_details() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Example 5: Mirror Error Details ---");
 
-    use stowage::Error;
-
     let storage = MirrorStorage::builder()
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
@@ -244,11 +242,29 @@ async fn example_5_mirror_error_details() -> Result<(), Box<dyn std::error::Erro
     storage.put_bytes("test.txt".to_string(), b"data").await?;
     println!("  ✓ Write to all backends succeeded");
 
-    // When a mirror operation fails, Error::MirrorFailure provides:
-    // - Which backends succeeded (indices)
-    // - Which backends failed (indices + error messages)
-    // - Success/failure counts
+    // When a mirror operation fails, Error::MirrorFailure(details) provides:
+    // - details.successes: Vec<usize> of backend indices
+    // - details.failures: Vec<(usize, Box<Error>)> with full error objects
+    // - details.rollback_errors: Vec<(usize, Box<Error>)> if rollback was attempted
+    //
+    // Helpful methods:
+    // - details.success_count(), details.failure_count()
+    // - details.has_successes(), details.has_failures()
+    // - details.has_rollback_errors()
     println!("  ✓ Mirror errors include detailed backend status");
+
+    // Example error handling:
+    // match storage.put_bytes(...).await {
+    //     Err(Error::MirrorFailure(details)) => {
+    //         println!("Failed: {} of {} backends",
+    //                  details.failure_count(),
+    //                  details.total_backends());
+    //         for (idx, err) in &details.failures {
+    //             println!("  Backend {}: {:?}", idx, err);
+    //         }
+    //     }
+    //     _ => {}
+    // }
 
     // With rollback enabled, failed writes are automatically cleaned up
     let storage_with_rollback = MirrorStorage::builder()
@@ -260,7 +276,8 @@ async fn example_5_mirror_error_details() -> Result<(), Box<dyn std::error::Erro
     storage_with_rollback
         .put_bytes("file.txt".to_string(), b"test")
         .await?;
-    println!("  ✓ Rollback enabled for atomic operations\n");
+    println!("  ✓ Rollback enabled for atomic operations");
+    println!("  ✓ Rollback errors (if any) are captured in details.rollback_errors\n");
 
     Ok(())
 }

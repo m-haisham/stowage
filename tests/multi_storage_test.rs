@@ -197,9 +197,44 @@ async fn test_mirror_error_contains_details() {
         .unwrap();
 
     // The structure supports detailed error reporting
-    // In a real scenario where one backend fails, Error::MirrorFailure would contain:
-    // - success_count and failure_count
-    // - successes: Vec<usize> of backend indices that succeeded
-    // - failures: Vec<(usize, String)> of backend indices and errors
+    // In a real scenario where one backend fails, Error::MirrorFailure(details) would contain:
+    // - details.successes: Vec<usize> of backend indices that succeeded
+    // - details.failures: Vec<(usize, Box<Error>)> with full error objects
+    // - details.rollback_errors: Vec<(usize, Box<Error>)> if rollback attempted
+    //
+    // Helpful methods available:
+    // - details.success_count(), details.failure_count(), details.total_backends()
+    // - details.has_successes(), details.has_failures(), details.has_rollback_errors()
+    // - details.failed_indices(), details.successful_indices()
     assert_eq!(storage.backend_count(), 2);
+}
+
+#[tokio::test]
+async fn test_mirror_failure_details_methods() {
+    use stowage::{Error, MirrorFailureDetails};
+
+    // Create a MirrorFailureDetails to test its methods
+    let details = MirrorFailureDetails {
+        successes: vec![0, 2],
+        failures: vec![
+            (1, Box::new(Error::Generic("Backend 1 error".to_string()))),
+            (3, Box::new(Error::Generic("Backend 3 error".to_string()))),
+        ],
+        rollback_errors: vec![(0, Box::new(Error::Generic("Rollback error".to_string())))],
+    };
+
+    assert_eq!(details.total_backends(), 4);
+    assert_eq!(details.success_count(), 2);
+    assert_eq!(details.failure_count(), 2);
+    assert!(details.has_successes());
+    assert!(details.has_failures());
+    assert!(details.has_rollback_errors());
+    assert_eq!(details.failed_indices(), vec![1, 3]);
+    assert_eq!(details.successful_indices(), &[0, 2]);
+
+    // Test Display implementation
+    let display = format!("{}", details);
+    assert!(display.contains("2 succeeded"));
+    assert!(display.contains("2 failed"));
+    assert!(display.contains("1 rollback errors"));
 }

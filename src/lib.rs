@@ -6,6 +6,114 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 /// A specialized Result type for Storage operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Details about a mirror operation failure.
+///
+/// Provides comprehensive information about which backends succeeded/failed
+/// and any errors encountered during rollback operations.
+///
+/// # Example
+///
+/// ```no_run
+/// use stowage::{Error, MirrorFailureDetails};
+/// use stowage::multi::{MirrorStorage, WriteStrategy};
+/// use stowage::MemoryStorage;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let storage = MirrorStorage::builder()
+///     .add_backend(MemoryStorage::new())
+///     .add_backend(MemoryStorage::new())
+///     .write_strategy(WriteStrategy::AllOrFail { rollback: true })
+///     .build();
+///
+/// match storage.put_bytes("file.txt".to_string(), b"data").await {
+///     Err(Error::MirrorFailure(details)) => {
+///         println!("Failed: {} of {} backends",
+///                  details.failure_count(),
+///                  details.total_backends());
+///
+///         // Access full error objects
+///         for (idx, error) in &details.failures {
+///             println!("Backend {}: {:?}", idx, error);
+///         }
+///
+///         // Check rollback status
+///         if details.has_rollback_errors() {
+///             println!("Rollback had {} errors", details.rollback_errors.len());
+///         }
+///     }
+///     Ok(_) => println!("Success!"),
+///     Err(e) => println!("Other error: {}", e),
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct MirrorFailureDetails {
+    /// Indices of backends that succeeded
+    pub successes: Vec<usize>,
+    /// Indices and errors of backends that failed
+    pub failures: Vec<(usize, Box<Error>)>,
+    /// Errors that occurred during rollback (if any)
+    pub rollback_errors: Vec<(usize, Box<Error>)>,
+}
+
+impl MirrorFailureDetails {
+    /// Total number of backends involved
+    pub fn total_backends(&self) -> usize {
+        self.successes.len() + self.failures.len()
+    }
+
+    /// Number of successful backends
+    pub fn success_count(&self) -> usize {
+        self.successes.len()
+    }
+
+    /// Number of failed backends
+    pub fn failure_count(&self) -> usize {
+        self.failures.len()
+    }
+
+    /// Check if any backends succeeded
+    pub fn has_successes(&self) -> bool {
+        !self.successes.is_empty()
+    }
+
+    /// Check if any backends failed
+    pub fn has_failures(&self) -> bool {
+        !self.failures.is_empty()
+    }
+
+    /// Check if rollback was attempted and had errors
+    pub fn has_rollback_errors(&self) -> bool {
+        !self.rollback_errors.is_empty()
+    }
+
+    /// Get indices of all failed backends
+    pub fn failed_indices(&self) -> Vec<usize> {
+        self.failures.iter().map(|(idx, _)| *idx).collect()
+    }
+
+    /// Get indices of all successful backends
+    pub fn successful_indices(&self) -> &[usize] {
+        &self.successes
+    }
+}
+
+impl std::fmt::Display for MirrorFailureDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Mirror operation failed: {} succeeded, {} failed",
+            self.success_count(),
+            self.failure_count()
+        )?;
+        if self.has_rollback_errors() {
+            write!(f, ", {} rollback errors", self.rollback_errors.len())?;
+        }
+        Ok(())
+    }
+}
+
 /// A unified Error type for storage operations.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -24,15 +132,8 @@ pub enum Error {
     #[error("Generic storage error: {0}")]
     Generic(String),
 
-    #[error("Mirror operation failed: {success_count} succeeded, {failure_count} failed")]
-    MirrorFailure {
-        success_count: usize,
-        failure_count: usize,
-        /// Indices of backends that succeeded
-        successes: Vec<usize>,
-        /// Indices and error messages of backends that failed
-        failures: Vec<(usize, String)>,
-    },
+    #[error("{0}")]
+    MirrorFailure(MirrorFailureDetails),
 }
 
 /// Adapter modules, gated behind Cargo features.

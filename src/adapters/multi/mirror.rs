@@ -1,4 +1,4 @@
-use crate::{Error, Result, Storage};
+use crate::{Error, MirrorFailureDetails, Result, Storage};
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -89,45 +89,56 @@ impl<S: Storage> MirrorStorage<S> {
 
     /// Evaluate if the write results meet the strategy requirements.
     /// Returns Ok(()) on success, or Error with detailed failure info.
-    fn evaluate_write_results(&self, results: &[Result<()>]) -> Result<()> {
+    fn evaluate_write_results(&self, results: &[Result<()>]) -> Result<MirrorFailureDetails> {
         let successes: Vec<usize> = results
             .iter()
             .enumerate()
             .filter_map(|(i, r)| if r.is_ok() { Some(i) } else { None })
             .collect();
 
-        let failures: Vec<(usize, String)> = results
+        let failures: Vec<(usize, Box<Error>)> = results
             .iter()
             .enumerate()
-            .filter_map(|(i, r)| r.as_ref().err().map(|e| (i, e.to_string())))
+            .filter_map(|(i, r)| {
+                r.as_ref()
+                    .err()
+                    .map(|e| (i, Box::new(Error::Generic(e.to_string()))))
+            })
             .collect();
 
         let required = self.write_strategy.required_successes(self.backends.len());
 
-        if successes.len() >= required {
-            Ok(())
+        let details = MirrorFailureDetails {
+            successes,
+            failures,
+            rollback_errors: Vec::new(),
+        };
+
+        if details.success_count() >= required {
+            Ok(details)
         } else {
-            Err(Error::MirrorFailure {
-                success_count: successes.len(),
-                failure_count: failures.len(),
-                successes,
-                failures,
-            })
+            Err(Error::MirrorFailure(details))
         }
     }
 
     /// Rollback successful writes by deleting from those backends.
-    async fn rollback_writes(&self, id: &S::Id, successful_indices: &[usize]) -> Result<()> {
-        let mut rollback_futures = Vec::new();
+    /// Returns the errors encountered during rollback.
+    async fn rollback_writes(
+        &self,
+        id: &S::Id,
+        successful_indices: &[usize],
+    ) -> Vec<(usize, Box<Error>)> {
+        let mut rollback_errors = Vec::new();
+
         for &idx in successful_indices {
             if let Some(backend) = self.backends.get(idx) {
-                rollback_futures.push(backend.delete(id));
+                if let Err(e) = backend.delete(id).await {
+                    rollback_errors.push((idx, Box::new(e)));
+                }
             }
         }
 
-        let _results = futures::future::join_all(rollback_futures).await;
-        // Ignore rollback errors - best effort
-        Ok(())
+        rollback_errors
     }
 }
 
@@ -190,22 +201,14 @@ impl<S: Storage> Storage for MirrorStorage<S> {
 
         // Evaluate results
         match self.evaluate_write_results(&results) {
-            Ok(()) => Ok(()),
-            Err(Error::MirrorFailure { ref successes, .. }) => {
+            Ok(_details) => Ok(()),
+            Err(Error::MirrorFailure(mut details)) => {
                 // Rollback if strategy requires it
-                if self.write_strategy.should_rollback() && !successes.is_empty() {
-                    let _ = self.rollback_writes(&id, successes).await;
+                if self.write_strategy.should_rollback() && details.has_successes() {
+                    let rollback_errors = self.rollback_writes(&id, &details.successes).await;
+                    details.rollback_errors = rollback_errors;
                 }
-                Err(Error::MirrorFailure {
-                    success_count: successes.len(),
-                    failure_count: results.len() - successes.len(),
-                    successes: successes.clone(),
-                    failures: results
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, r)| r.as_ref().err().map(|e| (i, e.to_string())))
-                        .collect(),
-                })
+                Err(Error::MirrorFailure(details))
             }
             Err(e) => Err(e),
         }
