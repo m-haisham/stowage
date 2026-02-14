@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tracing;
 
 /// Write operation strategy for mirrored backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,13 +192,16 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
         // Check primary first
         match self.primary().exists(id).await {
             Ok(exists) => Ok(exists),
-            Err(_) => {
+            Err(e) => {
+                tracing::warn!(?id, error = ?e, "Primary backend failed, trying fallbacks");
                 // If primary fails, try other backends
-                for backend in &self.backends {
+                for (idx, backend) in self.backends.iter().enumerate() {
                     if let Ok(exists) = backend.as_ref().exists(id).await {
+                        tracing::info!(?id, backend_index = idx, "Fallback succeeded");
                         return Ok(exists);
                     }
                 }
+                tracing::error!(?id, "All backends failed");
                 // If all fail, return the primary's error
                 self.primary().exists(id).await
             }
@@ -208,13 +212,16 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
         // Check primary first
         match self.primary().folder_exists(id).await {
             Ok(exists) => Ok(exists),
-            Err(_) => {
+            Err(e) => {
+                tracing::warn!(?id, error = ?e, "Primary folder check failed, trying fallbacks");
                 // If primary fails, try other backends
-                for backend in &self.backends {
+                for (idx, backend) in self.backends.iter().enumerate() {
                     if let Ok(exists) = backend.as_ref().folder_exists(id).await {
+                        tracing::info!(?id, backend_index = idx, "Fallback succeeded");
                         return Ok(exists);
                     }
                 }
+                tracing::error!(?id, "All folder checks failed");
                 // If all fail, return the primary's error
                 self.primary().folder_exists(id).await
             }
@@ -239,7 +246,7 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
             ReturnPolicy::WaitAll => {
                 // Write to all backends sequentially
                 let mut results = Vec::new();
-                for backend in &self.backends {
+                for (idx, backend) in self.backends.iter().enumerate() {
                     let cursor = std::io::Cursor::new(buffer.clone());
                     let mut async_cursor = tokio::io::BufReader::new(cursor);
                     let result = if let Some(timeout) = self.backend_timeout {
@@ -248,7 +255,15 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                             backend.as_ref().put(id.clone(), &mut async_cursor, len),
                         )
                         .await
-                        .unwrap_or_else(|_| Err(Error::Generic("Backend timeout".to_string())))
+                        .unwrap_or_else(|_| {
+                            tracing::warn!(
+                                ?id,
+                                backend_index = idx,
+                                ?timeout,
+                                "Backend write timed out"
+                            );
+                            Err(Error::Generic("Backend timeout".to_string()))
+                        })
                     } else {
                         backend
                             .as_ref()
@@ -262,10 +277,31 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                 match self.evaluate_write_results(&results) {
                     Ok(_details) => Ok(()),
                     Err(Error::MirrorFailure(mut details)) => {
+                        tracing::error!(
+                            ?id,
+                            success_count = details.success_count(),
+                            failure_count = details.failure_count(),
+                            required = required_successes,
+                            "Mirror write failed"
+                        );
                         // Rollback if strategy requires it
                         if self.write_strategy.should_rollback() && details.has_successes() {
+                            tracing::info!(
+                                ?id,
+                                rollback_count = details.successes.len(),
+                                "Starting rollback"
+                            );
                             let rollback_errors =
                                 self.rollback_writes(&id, &details.successes).await;
+                            if !rollback_errors.is_empty() {
+                                tracing::error!(
+                                    ?id,
+                                    rollback_error_count = rollback_errors.len(),
+                                    "Rollback encountered errors"
+                                );
+                            } else {
+                                tracing::info!(?id, "Rollback completed successfully");
+                            }
                             details.rollback_errors = rollback_errors;
                         }
                         Err(Error::MirrorFailure(details))
@@ -289,7 +325,15 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                             backend.as_ref().put(id.clone(), &mut async_cursor, len),
                         )
                         .await
-                        .unwrap_or_else(|_| Err(Error::Generic("Backend timeout".to_string())))
+                        .unwrap_or_else(|_| {
+                            tracing::warn!(
+                                ?id,
+                                backend_index = idx,
+                                ?timeout,
+                                "Backend write timed out"
+                            );
+                            Err(Error::Generic("Backend timeout".to_string()))
+                        })
                     } else {
                         backend
                             .as_ref()
@@ -303,6 +347,13 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                             successes.push(idx);
                             // Return early once we have enough successes
                             if success_count >= required_successes {
+                                tracing::info!(
+                                    ?id,
+                                    success_count,
+                                    completed_backends = idx + 1,
+                                    remaining_backends = self.backends.len() - (idx + 1),
+                                    "Threshold met, returning early with background writes"
+                                );
                                 // Spawn background task for remaining backends
                                 if idx + 1 < self.backends.len() {
                                     let remaining_backends: Vec<Arc<S>> =
@@ -310,14 +361,18 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                                     let buffer_clone = buffer.clone();
                                     let id_clone = id.clone();
                                     let timeout = self.backend_timeout;
+                                    let _remaining_count = remaining_backends.len();
                                     // Spawn background task for remaining backends
                                     // This is why S: 'static is required - the task must own the Arc
                                     tokio::spawn(async move {
-                                        for backend in remaining_backends {
+                                        for (rel_idx, backend) in
+                                            remaining_backends.iter().enumerate()
+                                        {
+                                            let abs_idx = idx + 1 + rel_idx;
                                             let cursor = std::io::Cursor::new(buffer_clone.clone());
                                             let mut async_cursor =
                                                 tokio::io::BufReader::new(cursor);
-                                            let _ = if let Some(timeout) = timeout {
+                                            let result = if let Some(timeout) = timeout {
                                                 tokio::time::timeout(
                                                     timeout,
                                                     backend.as_ref().put(
@@ -333,6 +388,16 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                                                     .put(id_clone.clone(), &mut async_cursor, len)
                                                     .await)
                                             };
+
+                                            if let Ok(Err(e)) = &result {
+                                                tracing::warn!(?id_clone, backend_index = abs_idx, error = ?e, "Background write failed");
+                                            } else if result.is_err() {
+                                                tracing::warn!(
+                                                    ?id_clone,
+                                                    backend_index = abs_idx,
+                                                    "Background write timed out"
+                                                );
+                                            }
                                         }
                                     });
                                 }
@@ -340,12 +405,19 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                             }
                         }
                         Err(e) => {
+                            tracing::warn!(?id, backend_index = idx, error = ?e, "Backend write failed");
                             failures.push((idx, Box::new(Error::Generic(e.to_string()))));
                         }
                     }
                 }
 
                 // If we get here, we didn't meet the threshold
+                tracing::error!(
+                    ?id,
+                    success_count,
+                    required_successes,
+                    "Mirror write failed"
+                );
                 let details = MirrorFailureDetails {
                     successes,
                     failures,
@@ -354,7 +426,19 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
 
                 // Rollback if strategy requires it
                 if self.write_strategy.should_rollback() && !details.successes.is_empty() {
+                    tracing::info!(
+                        ?id,
+                        rollback_count = details.successes.len(),
+                        "Starting rollback"
+                    );
                     let rollback_errors = self.rollback_writes(&id, &details.successes).await;
+                    if !rollback_errors.is_empty() {
+                        tracing::error!(
+                            ?id,
+                            rollback_error_count = rollback_errors.len(),
+                            "Rollback encountered errors"
+                        );
+                    }
                     Err(Error::MirrorFailure(MirrorFailureDetails {
                         rollback_errors,
                         ..details
@@ -379,7 +463,15 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                             backend.as_ref().put(id.clone(), &mut async_cursor, len),
                         )
                         .await
-                        .unwrap_or_else(|_| Err(Error::Generic("Backend timeout".to_string())))
+                        .unwrap_or_else(|_| {
+                            tracing::warn!(
+                                ?id,
+                                backend_index = idx,
+                                ?timeout,
+                                "Backend write timed out"
+                            );
+                            Err(Error::Generic("Backend timeout".to_string()))
+                        })
                     } else {
                         backend
                             .as_ref()
@@ -407,6 +499,13 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
 
                     // If we can't possibly meet the threshold, fail fast
                     if max_possible_successes < required_successes {
+                        tracing::warn!(
+                            ?id,
+                            success_count,
+                            required_successes,
+                            remaining_backends,
+                            "Success impossible, failing fast"
+                        );
                         let details = MirrorFailureDetails {
                             successes,
                             failures,
@@ -415,8 +514,20 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
 
                         // Rollback if strategy requires it
                         if self.write_strategy.should_rollback() && !details.successes.is_empty() {
+                            tracing::info!(
+                                ?id,
+                                rollback_count = details.successes.len(),
+                                "Starting rollback"
+                            );
                             let rollback_errors =
                                 self.rollback_writes(&id, &details.successes).await;
+                            if !rollback_errors.is_empty() {
+                                tracing::error!(
+                                    ?id,
+                                    rollback_error_count = rollback_errors.len(),
+                                    "Rollback encountered errors"
+                                );
+                            }
                             return Err(Error::MirrorFailure(MirrorFailureDetails {
                                 rollback_errors,
                                 ..details
@@ -431,6 +542,12 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
                 if success_count >= required_successes {
                     Ok(())
                 } else {
+                    tracing::error!(
+                        ?id,
+                        success_count,
+                        required_successes,
+                        "Mirror write failed"
+                    );
                     let details = MirrorFailureDetails {
                         successes,
                         failures,
@@ -439,7 +556,19 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
 
                     // Rollback if strategy requires it
                     if self.write_strategy.should_rollback() && !details.successes.is_empty() {
+                        tracing::info!(
+                            ?id,
+                            rollback_count = details.successes.len(),
+                            "Starting rollback"
+                        );
                         let rollback_errors = self.rollback_writes(&id, &details.successes).await;
+                        if !rollback_errors.is_empty() {
+                            tracing::error!(
+                                ?id,
+                                rollback_error_count = rollback_errors.len(),
+                                "Rollback encountered errors"
+                            );
+                        }
                         Err(Error::MirrorFailure(MirrorFailureDetails {
                             rollback_errors,
                             ..details
@@ -473,9 +602,15 @@ impl<S: Storage + 'static> Storage for MirrorStorage<S> {
         // For delete, we use AtLeastOne strategy (more lenient)
         // since delete is idempotent
         let successes = results.iter().filter(|r| r.is_ok()).count();
+        let failures = results.len() - successes;
+
         if successes > 0 {
+            if failures > 0 {
+                tracing::warn!(?id, successes, failures, "Delete succeeded partially");
+            }
             Ok(())
         } else {
+            tracing::error!(?id, "Delete failed on all backends");
             // All failed, return first error
             results.into_iter().find(|r| r.is_err()).unwrap()
         }

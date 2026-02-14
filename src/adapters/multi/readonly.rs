@@ -2,6 +2,7 @@ use crate::{Error, Result, Storage};
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tracing;
 
 /// Wraps any storage backend and prevents all write operations.
 ///
@@ -53,10 +54,11 @@ impl<S: Storage> Storage for ReadOnlyStorage<S> {
 
     async fn put<R: AsyncRead + Send + Sync + Unpin>(
         &self,
-        _id: Self::Id,
+        id: Self::Id,
         _input: R,
         _len: Option<u64>,
     ) -> Result<()> {
+        tracing::warn!(?id, "Write operation blocked (read-only storage)");
         Err(Error::PermissionDenied(
             "write operations not allowed on read-only storage".to_string(),
         ))
@@ -70,7 +72,8 @@ impl<S: Storage> Storage for ReadOnlyStorage<S> {
         self.inner.get_into(id, output).await
     }
 
-    async fn delete(&self, _id: &Self::Id) -> Result<()> {
+    async fn delete(&self, id: &Self::Id) -> Result<()> {
+        tracing::warn!(?id, "Delete operation blocked (read-only storage)");
         Err(Error::PermissionDenied(
             "delete operations not allowed on read-only storage".to_string(),
         ))
@@ -99,8 +102,12 @@ mod tests {
 
         let storage = ReadOnlyStorage::new(inner);
 
-        let data = storage.get_string(&"test.txt".to_string()).await.unwrap();
-        assert_eq!(data, "data");
+        let mut buf = Vec::new();
+        storage
+            .get_into(&"test.txt".to_string(), &mut buf)
+            .await
+            .unwrap();
+        assert_eq!(buf, b"data");
     }
 
     #[cfg(feature = "memory")]
