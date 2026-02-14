@@ -11,5 +11,5 @@ mod mirror;
 mod readonly;
 
 pub use fallback::FallbackStorage;
-pub use mirror::{MirrorStorage, MirrorStorageBuilder, WriteStrategy};
+pub use mirror::{MirrorStorage, MirrorStorageBuilder, ReturnPolicy, WriteStrategy};
 pub use readonly::ReadOnlyStorage;

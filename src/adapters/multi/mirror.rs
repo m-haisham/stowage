@@ -1,6 +1,8 @@
 use crate::{Error, MirrorFailureDetails, Result, Storage};
 use futures::stream::BoxStream;
 use std::fmt::Debug;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Write operation strategy for mirrored backends.
@@ -14,6 +16,24 @@ pub enum WriteStrategy {
 
     /// Majority of backends must succeed.
     Quorum { rollback: bool },
+}
+
+/// Controls when a mirror operation returns to the caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReturnPolicy {
+    /// Wait for all backends to complete before returning.
+    /// Returns error if strategy threshold is not met.
+    WaitAll,
+
+    /// Return as soon as the strategy threshold is met.
+    /// Remaining operations continue in background tasks.
+    /// Always succeeds once threshold is met, even if later backends fail.
+    Optimistic,
+
+    /// Return as soon as we know the strategy cannot succeed.
+    /// Also returns early if all required backends succeed.
+    /// May return before all backends complete if failure is certain.
+    FastFail,
 }
 
 impl WriteStrategy {
@@ -39,15 +59,22 @@ impl WriteStrategy {
 /// Mirrors data across multiple backends for redundancy.
 ///
 /// Writes to all backends sequentially. Reads from primary (configurable).
-/// Use [`WriteStrategy`] to control success criteria.
+/// Use [`WriteStrategy`] to control success criteria and [`ReturnPolicy`]
+/// to control when operations return to the caller.
+///
+/// **Note:** For Optimistic return policy with background writes, `S` must be `'static`.
+/// Use `get_into()` directly for reads; `get_string()`/`get_bytes()` may have issues
+/// with duplex streams in some async contexts.
 #[derive(Debug)]
-pub struct MirrorStorage<S: Storage> {
-    backends: Vec<S>,
+pub struct MirrorStorage<S: Storage + 'static> {
+    backends: Vec<Arc<S>>,
     write_strategy: WriteStrategy,
+    return_policy: ReturnPolicy,
+    backend_timeout: Option<Duration>,
     primary_index: usize,
 }
 
-impl<S: Storage> MirrorStorage<S> {
+impl<S: Storage + 'static> MirrorStorage<S> {
     /// Create a builder for configuring mirror storage.
     pub fn builder() -> MirrorStorageBuilder<S> {
         MirrorStorageBuilder::new()
@@ -64,8 +91,10 @@ impl<S: Storage> MirrorStorage<S> {
             "MirrorStorage requires at least one backend"
         );
         Self {
-            backends,
+            backends: backends.into_iter().map(Arc::new).collect(),
             write_strategy: WriteStrategy::AllOrFail { rollback: false },
+            return_policy: ReturnPolicy::WaitAll,
+            backend_timeout: None,
             primary_index: 0,
         }
     }
@@ -80,14 +109,24 @@ impl<S: Storage> MirrorStorage<S> {
         self.write_strategy
     }
 
+    /// Get the return policy.
+    pub fn return_policy(&self) -> ReturnPolicy {
+        self.return_policy
+    }
+
+    /// Get the backend timeout.
+    pub fn backend_timeout(&self) -> Option<Duration> {
+        self.backend_timeout
+    }
+
     /// Get a reference to a specific backend by index.
     pub fn backend(&self, index: usize) -> Option<&S> {
-        self.backends.get(index)
+        self.backends.get(index).map(|arc| arc.as_ref())
     }
 
     /// Get the primary backend (used for reads).
     pub fn primary(&self) -> &S {
-        &self.backends[self.primary_index]
+        self.backends[self.primary_index].as_ref()
     }
 
     /// Evaluate if the write results meet the strategy requirements.
@@ -135,7 +174,7 @@ impl<S: Storage> MirrorStorage<S> {
 
         for &idx in successful_indices {
             if let Some(backend) = self.backends.get(idx) {
-                if let Err(e) = backend.delete(id).await {
+                if let Err(e) = backend.as_ref().delete(id).await {
                     rollback_errors.push((idx, Box::new(e)));
                 }
             }
@@ -145,7 +184,7 @@ impl<S: Storage> MirrorStorage<S> {
     }
 }
 
-impl<S: Storage> Storage for MirrorStorage<S> {
+impl<S: Storage + 'static> Storage for MirrorStorage<S> {
     type Id = S::Id;
 
     async fn exists(&self, id: &Self::Id) -> Result<bool> {
@@ -155,7 +194,7 @@ impl<S: Storage> Storage for MirrorStorage<S> {
             Err(_) => {
                 // If primary fails, try other backends
                 for backend in &self.backends {
-                    if let Ok(exists) = backend.exists(id).await {
+                    if let Ok(exists) = backend.as_ref().exists(id).await {
                         return Ok(exists);
                     }
                 }
@@ -172,7 +211,7 @@ impl<S: Storage> Storage for MirrorStorage<S> {
             Err(_) => {
                 // If primary fails, try other backends
                 for backend in &self.backends {
-                    if let Ok(exists) = backend.folder_exists(id).await {
+                    if let Ok(exists) = backend.as_ref().folder_exists(id).await {
                         return Ok(exists);
                     }
                 }
@@ -194,26 +233,222 @@ impl<S: Storage> Storage for MirrorStorage<S> {
         let mut reader = input;
         reader.read_to_end(&mut buffer).await?;
 
-        // Write to all backends sequentially
-        let mut results = Vec::new();
-        for backend in &self.backends {
-            let cursor = std::io::Cursor::new(buffer.clone());
-            let mut async_cursor = tokio::io::BufReader::new(cursor);
-            results.push(backend.put(id.clone(), &mut async_cursor, len).await);
-        }
+        let required_successes = self.write_strategy.required_successes(self.backends.len());
 
-        // Evaluate results
-        match self.evaluate_write_results(&results) {
-            Ok(_details) => Ok(()),
-            Err(Error::MirrorFailure(mut details)) => {
-                // Rollback if strategy requires it
-                if self.write_strategy.should_rollback() && details.has_successes() {
-                    let rollback_errors = self.rollback_writes(&id, &details.successes).await;
-                    details.rollback_errors = rollback_errors;
+        match self.return_policy {
+            ReturnPolicy::WaitAll => {
+                // Write to all backends sequentially
+                let mut results = Vec::new();
+                for backend in &self.backends {
+                    let cursor = std::io::Cursor::new(buffer.clone());
+                    let mut async_cursor = tokio::io::BufReader::new(cursor);
+                    let result = if let Some(timeout) = self.backend_timeout {
+                        tokio::time::timeout(
+                            timeout,
+                            backend.as_ref().put(id.clone(), &mut async_cursor, len),
+                        )
+                        .await
+                        .unwrap_or_else(|_| Err(Error::Generic("Backend timeout".to_string())))
+                    } else {
+                        backend
+                            .as_ref()
+                            .put(id.clone(), &mut async_cursor, len)
+                            .await
+                    };
+                    results.push(result);
                 }
-                Err(Error::MirrorFailure(details))
+
+                // Evaluate results
+                match self.evaluate_write_results(&results) {
+                    Ok(_details) => Ok(()),
+                    Err(Error::MirrorFailure(mut details)) => {
+                        // Rollback if strategy requires it
+                        if self.write_strategy.should_rollback() && details.has_successes() {
+                            let rollback_errors =
+                                self.rollback_writes(&id, &details.successes).await;
+                            details.rollback_errors = rollback_errors;
+                        }
+                        Err(Error::MirrorFailure(details))
+                    }
+                    Err(e) => Err(e),
+                }
             }
-            Err(e) => Err(e),
+
+            ReturnPolicy::Optimistic => {
+                // Write to backends until we have enough successes, then spawn background task for the rest
+                let mut success_count = 0;
+                let mut successes = Vec::new();
+                let mut failures = Vec::new();
+
+                for (idx, backend) in self.backends.iter().enumerate() {
+                    let cursor = std::io::Cursor::new(buffer.clone());
+                    let mut async_cursor = tokio::io::BufReader::new(cursor);
+                    let result = if let Some(timeout) = self.backend_timeout {
+                        tokio::time::timeout(
+                            timeout,
+                            backend.as_ref().put(id.clone(), &mut async_cursor, len),
+                        )
+                        .await
+                        .unwrap_or_else(|_| Err(Error::Generic("Backend timeout".to_string())))
+                    } else {
+                        backend
+                            .as_ref()
+                            .put(id.clone(), &mut async_cursor, len)
+                            .await
+                    };
+
+                    match result {
+                        Ok(_) => {
+                            success_count += 1;
+                            successes.push(idx);
+                            // Return early once we have enough successes
+                            if success_count >= required_successes {
+                                // Spawn background task for remaining backends
+                                if idx + 1 < self.backends.len() {
+                                    let remaining_backends: Vec<Arc<S>> =
+                                        self.backends[(idx + 1)..].to_vec();
+                                    let buffer_clone = buffer.clone();
+                                    let id_clone = id.clone();
+                                    let timeout = self.backend_timeout;
+                                    // Spawn background task for remaining backends
+                                    // This is why S: 'static is required - the task must own the Arc
+                                    tokio::spawn(async move {
+                                        for backend in remaining_backends {
+                                            let cursor = std::io::Cursor::new(buffer_clone.clone());
+                                            let mut async_cursor =
+                                                tokio::io::BufReader::new(cursor);
+                                            let _ = if let Some(timeout) = timeout {
+                                                tokio::time::timeout(
+                                                    timeout,
+                                                    backend.as_ref().put(
+                                                        id_clone.clone(),
+                                                        &mut async_cursor,
+                                                        len,
+                                                    ),
+                                                )
+                                                .await
+                                            } else {
+                                                Ok(backend
+                                                    .as_ref()
+                                                    .put(id_clone.clone(), &mut async_cursor, len)
+                                                    .await)
+                                            };
+                                        }
+                                    });
+                                }
+                                return Ok(());
+                            }
+                        }
+                        Err(e) => {
+                            failures.push((idx, Box::new(Error::Generic(e.to_string()))));
+                        }
+                    }
+                }
+
+                // If we get here, we didn't meet the threshold
+                let details = MirrorFailureDetails {
+                    successes,
+                    failures,
+                    rollback_errors: Vec::new(),
+                };
+
+                // Rollback if strategy requires it
+                if self.write_strategy.should_rollback() && !details.successes.is_empty() {
+                    let rollback_errors = self.rollback_writes(&id, &details.successes).await;
+                    Err(Error::MirrorFailure(MirrorFailureDetails {
+                        rollback_errors,
+                        ..details
+                    }))
+                } else {
+                    Err(Error::MirrorFailure(details))
+                }
+            }
+
+            ReturnPolicy::FastFail => {
+                // Write to backends, but return early if we know we can't succeed
+                let mut success_count = 0;
+                let mut successes = Vec::new();
+                let mut failures = Vec::new();
+
+                for (idx, backend) in self.backends.iter().enumerate() {
+                    let cursor = std::io::Cursor::new(buffer.clone());
+                    let mut async_cursor = tokio::io::BufReader::new(cursor);
+                    let result = if let Some(timeout) = self.backend_timeout {
+                        tokio::time::timeout(
+                            timeout,
+                            backend.as_ref().put(id.clone(), &mut async_cursor, len),
+                        )
+                        .await
+                        .unwrap_or_else(|_| Err(Error::Generic("Backend timeout".to_string())))
+                    } else {
+                        backend
+                            .as_ref()
+                            .put(id.clone(), &mut async_cursor, len)
+                            .await
+                    };
+
+                    match result {
+                        Ok(_) => {
+                            success_count += 1;
+                            successes.push(idx);
+                            // Return early if we have enough successes
+                            if success_count >= required_successes {
+                                return Ok(());
+                            }
+                        }
+                        Err(e) => {
+                            failures.push((idx, Box::new(Error::Generic(e.to_string()))));
+                        }
+                    }
+
+                    // Calculate if success is still possible
+                    let remaining_backends = self.backends.len() - (idx + 1);
+                    let max_possible_successes = success_count + remaining_backends;
+
+                    // If we can't possibly meet the threshold, fail fast
+                    if max_possible_successes < required_successes {
+                        let details = MirrorFailureDetails {
+                            successes,
+                            failures,
+                            rollback_errors: Vec::new(),
+                        };
+
+                        // Rollback if strategy requires it
+                        if self.write_strategy.should_rollback() && !details.successes.is_empty() {
+                            let rollback_errors =
+                                self.rollback_writes(&id, &details.successes).await;
+                            return Err(Error::MirrorFailure(MirrorFailureDetails {
+                                rollback_errors,
+                                ..details
+                            }));
+                        } else {
+                            return Err(Error::MirrorFailure(details));
+                        }
+                    }
+                }
+
+                // If we get here, evaluate final results
+                if success_count >= required_successes {
+                    Ok(())
+                } else {
+                    let details = MirrorFailureDetails {
+                        successes,
+                        failures,
+                        rollback_errors: Vec::new(),
+                    };
+
+                    // Rollback if strategy requires it
+                    if self.write_strategy.should_rollback() && !details.successes.is_empty() {
+                        let rollback_errors = self.rollback_writes(&id, &details.successes).await;
+                        Err(Error::MirrorFailure(MirrorFailureDetails {
+                            rollback_errors,
+                            ..details
+                        }))
+                    } else {
+                        Err(Error::MirrorFailure(details))
+                    }
+                }
+            }
         }
     }
 
@@ -229,7 +464,10 @@ impl<S: Storage> Storage for MirrorStorage<S> {
 
     async fn delete(&self, id: &Self::Id) -> Result<()> {
         // Delete from all backends in parallel
-        let futures = self.backends.iter().map(|backend| backend.delete(id));
+        let futures = self
+            .backends
+            .iter()
+            .map(|backend| backend.as_ref().delete(id));
         let results: Vec<Result<()>> = futures::future::join_all(futures).await;
 
         // For delete, we use AtLeastOne strategy (more lenient)
@@ -252,18 +490,22 @@ impl<S: Storage> Storage for MirrorStorage<S> {
 }
 
 /// Builder for [`MirrorStorage`].
-pub struct MirrorStorageBuilder<S: Storage> {
+pub struct MirrorStorageBuilder<S: Storage + 'static> {
     backends: Vec<S>,
     write_strategy: WriteStrategy,
+    return_policy: ReturnPolicy,
+    backend_timeout: Option<Duration>,
     primary_index: usize,
 }
 
-impl<S: Storage> MirrorStorageBuilder<S> {
+impl<S: Storage + 'static> MirrorStorageBuilder<S> {
     /// Create a new builder.
     pub fn new() -> Self {
         Self {
             backends: Vec::new(),
             write_strategy: WriteStrategy::AllOrFail { rollback: false },
+            return_policy: ReturnPolicy::WaitAll,
+            backend_timeout: None,
             primary_index: 0,
         }
     }
@@ -277,6 +519,18 @@ impl<S: Storage> MirrorStorageBuilder<S> {
     /// Set write strategy.
     pub fn write_strategy(mut self, strategy: WriteStrategy) -> Self {
         self.write_strategy = strategy;
+        self
+    }
+
+    /// Set return policy (default: WaitAll).
+    pub fn return_policy(mut self, policy: ReturnPolicy) -> Self {
+        self.return_policy = policy;
+        self
+    }
+
+    /// Set per-backend timeout (default: None).
+    pub fn backend_timeout(mut self, timeout: Duration) -> Self {
+        self.backend_timeout = Some(timeout);
         self
     }
 
@@ -300,24 +554,28 @@ impl<S: Storage> MirrorStorageBuilder<S> {
         );
 
         MirrorStorage {
-            backends: self.backends,
+            backends: self.backends.into_iter().map(Arc::new).collect(),
             write_strategy: self.write_strategy,
+            return_policy: self.return_policy,
+            backend_timeout: self.backend_timeout,
             primary_index: self.primary_index,
         }
     }
 }
 
-impl<S: Storage> Default for MirrorStorageBuilder<S> {
+impl<S: Storage + 'static> Default for MirrorStorageBuilder<S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: Storage> Debug for MirrorStorageBuilder<S> {
+impl<S: Storage + 'static> Debug for MirrorStorageBuilder<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MirrorStorageBuilder")
             .field("backend_count", &self.backends.len())
             .field("write_strategy", &self.write_strategy)
+            .field("return_policy", &self.return_policy)
+            .field("backend_timeout", &self.backend_timeout)
             .field("primary_index", &self.primary_index)
             .finish()
     }
@@ -359,8 +617,12 @@ mod tests {
         }
 
         // Should be able to read
-        let data = storage.get_string(&"test".to_string()).await.unwrap();
-        assert_eq!(data, "data");
+        let mut buf = Vec::new();
+        storage
+            .get_into(&"test".to_string(), &mut buf)
+            .await
+            .unwrap();
+        assert_eq!(buf, b"data");
     }
 
     #[cfg(feature = "memory")]
@@ -522,21 +784,132 @@ mod tests {
     async fn test_mirror_read_fallback() {
         use crate::MemoryStorage;
 
-        let backend1 = MemoryStorage::new();
-        let backend2 = MemoryStorage::new();
+        let storage = MirrorStorage::new(vec![MemoryStorage::new(), MemoryStorage::new()]);
 
-        let storage = MirrorStorage::new(vec![backend1, backend2]);
-
-        // Put in first backend via the mirror
+        // Write via the mirror storage (writes to all backends)
         storage
-            .backend(0)
-            .unwrap()
             .put_bytes("test".to_string(), b"data")
             .await
             .unwrap();
 
         // Should read from first backend
-        let data = storage.get_string(&"test".to_string()).await.unwrap();
-        assert_eq!(data, "data");
+        let mut buf = Vec::new();
+        storage
+            .get_into(&"test".to_string(), &mut buf)
+            .await
+            .unwrap();
+        assert_eq!(buf, b"data");
+
+        // Verify both backends have the data
+        assert!(
+            storage
+                .backend(0)
+                .unwrap()
+                .exists(&"test".to_string())
+                .await
+                .unwrap()
+        );
+        assert!(
+            storage
+                .backend(1)
+                .unwrap()
+                .exists(&"test".to_string())
+                .await
+                .unwrap()
+        );
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn test_mirror_optimistic_return() {
+        use crate::MemoryStorage;
+
+        // With optimistic return, should succeed once quorum is met
+        let storage = MirrorStorage::builder()
+            .add_backend(MemoryStorage::new())
+            .add_backend(MemoryStorage::new())
+            .add_backend(MemoryStorage::new())
+            .write_strategy(WriteStrategy::Quorum { rollback: false })
+            .return_policy(ReturnPolicy::Optimistic)
+            .build();
+
+        // Should return quickly once 2/3 succeed
+        storage
+            .put_bytes("test".to_string(), b"data")
+            .await
+            .unwrap();
+
+        // Eventually all backends should have the data (after background write)
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // All backends should have it now
+        assert!(
+            storage
+                .backend(0)
+                .unwrap()
+                .exists(&"test".to_string())
+                .await
+                .unwrap()
+        );
+        assert!(
+            storage
+                .backend(1)
+                .unwrap()
+                .exists(&"test".to_string())
+                .await
+                .unwrap()
+        );
+        assert!(
+            storage
+                .backend(2)
+                .unwrap()
+                .exists(&"test".to_string())
+                .await
+                .unwrap()
+        );
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn test_mirror_backend_timeout() {
+        use crate::MemoryStorage;
+        use std::time::Duration;
+
+        let storage = MirrorStorage::builder()
+            .add_backend(MemoryStorage::new())
+            .add_backend(MemoryStorage::new())
+            .write_strategy(WriteStrategy::AtLeastOne { rollback: false })
+            .backend_timeout(Duration::from_secs(5))
+            .build();
+
+        // Should succeed even if a backend times out (with AtLeastOne)
+        storage
+            .put_bytes("test".to_string(), b"data")
+            .await
+            .unwrap();
+
+        assert_eq!(storage.backend_timeout(), Some(Duration::from_secs(5)));
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn test_mirror_fast_fail() {
+        use crate::MemoryStorage;
+
+        // With AllOrFail and fast fail, should return as soon as success is impossible
+        let storage = MirrorStorage::builder()
+            .add_backend(MemoryStorage::new())
+            .add_backend(MemoryStorage::new())
+            .write_strategy(WriteStrategy::AllOrFail { rollback: false })
+            .return_policy(ReturnPolicy::FastFail)
+            .build();
+
+        // All backends succeed in this test
+        storage
+            .put_bytes("file3.txt".to_string(), b"data")
+            .await
+            .unwrap();
+
+        assert_eq!(storage.return_policy(), ReturnPolicy::FastFail);
     }
 }

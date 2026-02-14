@@ -8,7 +8,8 @@
 //! cargo run --example multi_storage_example --features="memory,local"
 //! ```
 
-use stowage::multi::{FallbackStorage, MirrorStorage, WriteStrategy};
+use std::time::Duration;
+use stowage::multi::{FallbackStorage, MirrorStorage, ReturnPolicy, WriteStrategy};
 use stowage::{LocalStorage, MemoryStorage, Storage, StorageExt};
 use tempfile::TempDir;
 
@@ -33,6 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 6: Advanced Composition
     example_6_advanced_composition().await?;
+
+    // Example 7: Return Policies
+    example_7_return_policies().await?;
 
     println!("\n=== All examples completed successfully! ===");
     Ok(())
@@ -310,6 +314,106 @@ async fn example_6_advanced_composition() -> Result<(), Box<dyn std::error::Erro
     println!("    ✓ Deleted from all tiers");
 
     println!("\n  ✓ Advanced composition works correctly!\n");
+
+    Ok(())
+}
+
+/// Example 7: Return Policies - Control when mirror operations return
+async fn example_7_return_policies() -> Result<(), Box<dyn std::error::Error>> {
+    println!("--- Example 7: Return Policies ---");
+
+    // WaitAll: Default behavior - wait for all backends to complete
+    println!("\n  Strategy 1: WaitAll (default)");
+    let storage_wait_all = MirrorStorage::builder()
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .write_strategy(WriteStrategy::Quorum { rollback: false })
+        .return_policy(ReturnPolicy::WaitAll)
+        .build();
+
+    let start = std::time::Instant::now();
+    storage_wait_all
+        .put_bytes("file1.txt".to_string(), b"data")
+        .await?;
+    let elapsed = start.elapsed();
+    println!("    ✓ Completed in {:?}", elapsed);
+    println!("    - All 3 backends completed before returning");
+
+    // Optimistic: Return as soon as threshold is met (2/3 for quorum)
+    println!("\n  Strategy 2: Optimistic");
+    let storage_optimistic = MirrorStorage::builder()
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .write_strategy(WriteStrategy::Quorum { rollback: false })
+        .return_policy(ReturnPolicy::Optimistic)
+        .build();
+
+    let start = std::time::Instant::now();
+    storage_optimistic
+        .put_bytes("file2.txt".to_string(), b"data")
+        .await?;
+    let elapsed = start.elapsed();
+    println!("    ✓ Completed in {:?}", elapsed);
+    println!("    - Returned after 2/3 backends (quorum met)");
+    println!("    - Third backend continues in background");
+
+    // Give background task time to complete
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        storage_optimistic
+            .backend(2)
+            .unwrap()
+            .exists(&"file2.txt".to_string())
+            .await?
+    );
+    println!("    ✓ Background write completed");
+
+    // FastFail: Return early if success is impossible or already achieved
+    println!("\n  Strategy 3: FastFail");
+    let storage_fast_fail = MirrorStorage::builder()
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .write_strategy(WriteStrategy::AllOrFail { rollback: false })
+        .return_policy(ReturnPolicy::FastFail)
+        .build();
+
+    let start = std::time::Instant::now();
+    storage_fast_fail
+        .put_bytes("file3.txt".to_string(), b"data")
+        .await?;
+    let elapsed = start.elapsed();
+    println!("    ✓ Completed in {:?}", elapsed);
+    println!("    - Returns as soon as all required backends succeed");
+    println!("    - Would fail fast if success becomes impossible");
+
+    // Backend timeouts
+    println!("\n  Strategy 4: Backend Timeouts");
+    let storage_with_timeout = MirrorStorage::builder()
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .write_strategy(WriteStrategy::AtLeastOne { rollback: false })
+        .backend_timeout(Duration::from_secs(5))
+        .return_policy(ReturnPolicy::WaitAll)
+        .build();
+
+    storage_with_timeout
+        .put_bytes("file4.txt".to_string(), b"data")
+        .await?;
+    println!("    ✓ Configured with 5s timeout per backend");
+    println!("    - Prevents indefinite waiting on slow backends");
+    println!("    - With AtLeastOne strategy, tolerates timeouts");
+
+    // Comparison: Optimistic vs WaitAll for latency-sensitive applications
+    println!("\n  Use Case Recommendations:");
+    println!("    • WaitAll: Strong consistency, can verify all writes");
+    println!("    • Optimistic: Lower latency, eventual consistency");
+    println!("    • FastFail: Fast error detection, efficient resource use");
+    println!("    • Timeouts: Prevents slow backends from blocking operations");
+
+    println!("\n  ✓ Return policies demonstrated!\n");
 
     Ok(())
 }
