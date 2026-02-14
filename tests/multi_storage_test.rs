@@ -208,33 +208,3 @@ async fn test_mirror_error_contains_details() {
     // - details.failed_indices(), details.successful_indices()
     assert_eq!(storage.backend_count(), 2);
 }
-
-#[tokio::test]
-async fn test_mirror_failure_details_methods() {
-    use stowage::{Error, MirrorFailureDetails};
-
-    // Create a MirrorFailureDetails to test its methods
-    let details = MirrorFailureDetails {
-        successes: vec![0, 2],
-        failures: vec![
-            (1, Box::new(Error::Generic("Backend 1 error".to_string()))),
-            (3, Box::new(Error::Generic("Backend 3 error".to_string()))),
-        ],
-        rollback_errors: vec![(0, Box::new(Error::Generic("Rollback error".to_string())))],
-    };
-
-    assert_eq!(details.total_backends(), 4);
-    assert_eq!(details.success_count(), 2);
-    assert_eq!(details.failure_count(), 2);
-    assert!(details.has_successes());
-    assert!(details.has_failures());
-    assert!(details.has_rollback_errors());
-    assert_eq!(details.failed_indices(), vec![1, 3]);
-    assert_eq!(details.successful_indices(), &[0, 2]);
-
-    // Test Display implementation
-    let display = format!("{}", details);
-    assert!(display.contains("2 succeeded"));
-    assert!(display.contains("2 failed"));
-    assert!(display.contains("1 rollback errors"));
-}

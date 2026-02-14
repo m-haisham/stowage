@@ -7,20 +7,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 ///
 /// Useful for enforcing read-only access or creating safe views.
 ///
-/// # Example
-///
-/// ```no_run
+/// ```
 /// # use stowage::{Storage, StorageExt};
-/// # async fn example() -> stowage::Result<()> {
-/// use stowage::multi::ReadOnlyStorage;
+/// # use stowage::multi::ReadOnlyStorage;
 /// # use stowage::MemoryStorage;
-///
+/// # async fn example() -> stowage::Result<()> {
 /// let storage = ReadOnlyStorage::new(MemoryStorage::new());
-///
-/// // Reads work fine
 /// let data = storage.get_bytes(&"file.txt".to_string()).await;
-///
-/// // Writes are rejected
 /// assert!(storage.put_bytes("file.txt".to_string(), b"data").await.is_err());
 /// # Ok(())
 /// # }

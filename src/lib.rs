@@ -8,41 +8,27 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Details about a mirror operation failure.
 ///
-/// Provides comprehensive information about which backends succeeded/failed
-/// and any errors encountered during rollback operations.
+/// Contains backend indices and full error objects for successes/failures,
+/// plus any rollback errors if rollback was attempted.
 ///
-/// # Example
-///
-/// ```no_run
-/// use stowage::{Error, MirrorFailureDetails};
-/// use stowage::multi::{MirrorStorage, WriteStrategy};
-/// use stowage::MemoryStorage;
-///
+/// ```
+/// # use stowage::{Error, MirrorFailureDetails, StorageExt};
+/// # use stowage::multi::{MirrorStorage, WriteStrategy};
+/// # use stowage::MemoryStorage;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let storage = MirrorStorage::builder()
-///     .add_backend(MemoryStorage::new())
-///     .add_backend(MemoryStorage::new())
-///     .write_strategy(WriteStrategy::AllOrFail { rollback: true })
-///     .build();
-///
+/// # let storage = MirrorStorage::builder()
+/// #     .add_backend(MemoryStorage::new())
+/// #     .add_backend(MemoryStorage::new())
+/// #     .write_strategy(WriteStrategy::AllOrFail { rollback: true })
+/// #     .build();
 /// match storage.put_bytes("file.txt".to_string(), b"data").await {
 ///     Err(Error::MirrorFailure(details)) => {
-///         println!("Failed: {} of {} backends",
-///                  details.failure_count(),
-///                  details.total_backends());
-///
-///         // Access full error objects
+///         println!("{} of {} failed", details.failure_count(), details.total_backends());
 ///         for (idx, error) in &details.failures {
-///             println!("Backend {}: {:?}", idx, error);
-///         }
-///
-///         // Check rollback status
-///         if details.has_rollback_errors() {
-///             println!("Rollback had {} errors", details.rollback_errors.len());
+///             eprintln!("Backend {}: {:?}", idx, error);
 ///         }
 ///     }
-///     Ok(_) => println!("Success!"),
-///     Err(e) => println!("Other error: {}", e),
+///     _ => {}
 /// }
 /// # Ok(())
 /// # }

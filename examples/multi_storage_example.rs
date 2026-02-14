@@ -39,35 +39,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Example 1: Simple Fallback Storage
-///
-/// Demonstrates automatic failover from primary to secondary storage.
 async fn example_1_simple_fallback() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Example 1: Simple Fallback ---");
 
     let primary = MemoryStorage::new();
     let secondary = MemoryStorage::new();
 
-    // Pre-populate secondary with some data
     secondary
         .put_bytes("old-file.txt".to_string(), b"This was in the backup")
         .await?;
 
     let storage = FallbackStorage::new(primary, secondary);
 
-    // Write new data (goes to primary only)
     storage
         .put_bytes("new-file.txt".to_string(), b"Fresh data")
         .await?;
 
-    // Read from primary
     let new_data = storage.get_string(&"new-file.txt".to_string()).await?;
     println!("  New file (from primary): {}", new_data);
 
-    // Read falls back to secondary when not in primary
     let old_data = storage.get_string(&"old-file.txt".to_string()).await?;
     println!("  Old file (from secondary fallback): {}", old_data);
 
-    // Verify primary doesn't have old file
     assert!(
         !storage
             .primary()
@@ -80,8 +73,6 @@ async fn example_1_simple_fallback() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Example 2: Simple Mirror Storage
-///
-/// Demonstrates parallel writes to multiple backends for redundancy.
 async fn example_2_simple_mirror() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Example 2: Simple Mirror ---");
 
@@ -92,17 +83,12 @@ async fn example_2_simple_mirror() -> Result<(), Box<dyn std::error::Error>> {
         .write_strategy(WriteStrategy::AllOrFail { rollback: false })
         .build();
 
-    // Write to all backends in parallel
     storage
         .put_bytes("mirrored.txt".to_string(), b"Replicated data")
         .await?;
 
-    println!(
-        "  Wrote to {} backends in parallel",
-        storage.backend_count()
-    );
+    println!("  Wrote to {} backends", storage.backend_count());
 
-    // Verify all backends have the data
     for i in 0..storage.backend_count() {
         let exists = storage
             .backend(i)
@@ -112,7 +98,6 @@ async fn example_2_simple_mirror() -> Result<(), Box<dyn std::error::Error>> {
         println!("    Backend {}: {}", i, if exists { "✓" } else { "✗" });
     }
 
-    // Read from primary backend
     let data = storage.get_string(&"mirrored.txt".to_string()).await?;
     println!("  Read data: {}", data);
     println!("  ✓ Mirroring works correctly\n");
@@ -121,38 +106,26 @@ async fn example_2_simple_mirror() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Example 3: Fallback with Mirror
-///
-/// Demonstrates composing patterns: A mirrored primary with a fallback cache.
-/// Use case: High-availability production storage with local cache fallback.
 async fn example_3_fallback_with_mirror() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Example 3: Fallback with Mirrored Primary ---");
 
-    // Create a mirrored primary storage (for redundancy)
     let mirrored_primary = MirrorStorage::builder()
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
         .write_strategy(WriteStrategy::Quorum)
         .build();
 
-    // Create a local cache as fallback
     let cache = MemoryStorage::new();
     cache
         .put_bytes("cached-file.txt".to_string(), b"From cache")
         .await?;
 
-    // Compose them: mirrored storage with cache fallback
     let storage = FallbackStorage::new(mirrored_primary, cache);
 
-    println!("  Architecture: [Mirror(Backend1, Backend2)] -> [Cache]");
-
-    // Write new data (goes to both mirrored backends)
     storage
         .put_bytes("new-data.txt".to_string(), b"Fresh mirrored data")
         .await?;
 
-    println!("  ✓ Wrote to mirrored primary");
-
-    // Verify both mirror backends have it
     let mirror = storage.primary();
     assert!(
         mirror
@@ -168,17 +141,13 @@ async fn example_3_fallback_with_mirror() -> Result<(), Box<dyn std::error::Erro
             .exists(&"new-data.txt".to_string())
             .await?
     );
-    println!("  ✓ Both mirror backends confirmed");
 
-    // Read from mirrored primary
     let data = storage.get_string(&"new-data.txt".to_string()).await?;
     println!("  ✓ Read from primary: {}", data);
 
-    // Read old data (falls back to cache)
     let cached = storage.get_string(&"cached-file.txt".to_string()).await?;
     println!("  ✓ Read from cache fallback: {}", cached);
 
-    // Verify mirrored backends don't have cached file
     assert!(
         !mirror
             .backend(0)
@@ -186,14 +155,12 @@ async fn example_3_fallback_with_mirror() -> Result<(), Box<dyn std::error::Erro
             .exists(&"cached-file.txt".to_string())
             .await?
     );
-    println!("  ✓ Fallback working correctly\n");
+    println!("  ✓ Composition works correctly\n");
 
     Ok(())
 }
 
 /// Example 4: Read-Only Storage
-///
-/// Demonstrates wrapping storage to prevent writes.
 async fn example_4_readonly() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Example 4: Read-Only Storage ---");
 
@@ -206,29 +173,16 @@ async fn example_4_readonly() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage = ReadOnlyStorage::new(inner);
 
-    // Reads work fine
     let data = storage.get_string(&"readonly-file.txt".to_string()).await?;
     println!("  Read data: {}", data);
 
-    // Writes are rejected
     let result = storage.put_bytes("new.txt".to_string(), b"data").await;
     assert!(result.is_err());
-    println!("  ✓ Write operation blocked");
-
-    // Can compose with other patterns
-    let fallback_readonly = FallbackStorage::new(
-        ReadOnlyStorage::new(MemoryStorage::new()),
-        MemoryStorage::new(),
-    );
-    println!("  ✓ Read-only storage can be composed\n");
-
-    let _ = fallback_readonly; // Suppress unused warning
+    println!("  ✓ Write rejected\n");
     Ok(())
 }
 
 /// Example 5: Mirror Error Details
-///
-/// Demonstrates detailed error reporting on mirror failures.
 async fn example_5_mirror_error_details() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Example 5: Mirror Error Details ---");
 
@@ -238,35 +192,9 @@ async fn example_5_mirror_error_details() -> Result<(), Box<dyn std::error::Erro
         .write_strategy(WriteStrategy::AllOrFail { rollback: false })
         .build();
 
-    // Normal write succeeds
     storage.put_bytes("test.txt".to_string(), b"data").await?;
-    println!("  ✓ Write to all backends succeeded");
+    println!("  ✓ Write succeeded");
 
-    // When a mirror operation fails, Error::MirrorFailure(details) provides:
-    // - details.successes: Vec<usize> of backend indices
-    // - details.failures: Vec<(usize, Box<Error>)> with full error objects
-    // - details.rollback_errors: Vec<(usize, Box<Error>)> if rollback was attempted
-    //
-    // Helpful methods:
-    // - details.success_count(), details.failure_count()
-    // - details.has_successes(), details.has_failures()
-    // - details.has_rollback_errors()
-    println!("  ✓ Mirror errors include detailed backend status");
-
-    // Example error handling:
-    // match storage.put_bytes(...).await {
-    //     Err(Error::MirrorFailure(details)) => {
-    //         println!("Failed: {} of {} backends",
-    //                  details.failure_count(),
-    //                  details.total_backends());
-    //         for (idx, err) in &details.failures {
-    //             println!("  Backend {}: {:?}", idx, err);
-    //         }
-    //     }
-    //     _ => {}
-    // }
-
-    // With rollback enabled, failed writes are automatically cleaned up
     let storage_with_rollback = MirrorStorage::builder()
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
@@ -276,17 +204,12 @@ async fn example_5_mirror_error_details() -> Result<(), Box<dyn std::error::Erro
     storage_with_rollback
         .put_bytes("file.txt".to_string(), b"test")
         .await?;
-    println!("  ✓ Rollback enabled for atomic operations");
-    println!("  ✓ Rollback errors (if any) are captured in details.rollback_errors\n");
+    println!("  ✓ Rollback enabled for atomic operations\n");
 
     Ok(())
 }
 
-/// Example 6: Advanced Composition with Local and Memory Storage
-///
-/// Demonstrates a realistic multi-tier storage architecture:
-/// - Tier 1: Fast in-memory cache (mirror for redundancy)
-/// - Tier 2: Persistent local storage fallback
+/// Example 6: Advanced Composition
 async fn example_6_advanced_composition() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Example 6: Advanced Multi-Tier Architecture ---");
 
