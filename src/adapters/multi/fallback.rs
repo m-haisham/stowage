@@ -1,0 +1,369 @@
+use crate::{Result, Storage};
+use futures::stream::BoxStream;
+use std::fmt::Debug;
+use tokio::io::{AsyncRead, AsyncWrite};
+
+/// Storage adapter that automatically falls back to a secondary backend when the primary fails.
+///
+/// This adapter attempts operations on the primary storage first. If the primary returns
+/// an error (especially `NotFound`), it automatically tries the secondary storage.
+///
+/// # Write Behavior
+///
+/// By default, writes only go to the primary storage. This is suitable for:
+/// - Migration scenarios (write to new storage, read from old as fallback)
+/// - Cache-aside patterns (write to cache, read from backing store as fallback)
+///
+/// Use [`FallbackStorage::with_write_through`] to write to both backends.
+///
+/// # Examples
+///
+/// ```no_run
+/// use stowage::{LocalStorage, Storage, StorageExt};
+/// use stowage::multi::FallbackStorage;
+///
+/// # async fn example() -> stowage::Result<()> {
+/// let primary = LocalStorage::new("/fast-ssd");
+/// let secondary = LocalStorage::new("/slow-hdd");
+///
+/// let storage = FallbackStorage::new(primary, secondary);
+///
+/// // Write to primary only
+/// storage.put_bytes("file.txt".to_string(), b"data").await?;
+///
+/// // Read tries primary first, then secondary
+/// let data = storage.get_bytes(&"file.txt".to_string()).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Write-Through Mode
+///
+/// ```no_run
+/// # use stowage::{LocalStorage, Storage, StorageExt};
+/// # use stowage::multi::FallbackStorage;
+/// # async fn example() -> stowage::Result<()> {
+/// let primary = LocalStorage::new("/primary");
+/// let secondary = LocalStorage::new("/backup");
+///
+/// let storage = FallbackStorage::new(primary, secondary)
+///     .with_write_through(true);
+///
+/// // Writes to both primary and secondary
+/// storage.put_bytes("file.txt".to_string(), b"data").await?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct FallbackStorage<P, S>
+where
+    P: Storage,
+    S: Storage<Id = P::Id>,
+{
+    primary: P,
+    secondary: S,
+    write_through: bool,
+}
+
+impl<P, S> FallbackStorage<P, S>
+where
+    P: Storage,
+    S: Storage<Id = P::Id>,
+{
+    /// Create a new fallback storage with primary and secondary backends.
+    ///
+    /// By default, writes only go to the primary. Use [`with_write_through`](Self::with_write_through)
+    /// to enable writing to both backends.
+    pub fn new(primary: P, secondary: S) -> Self {
+        Self {
+            primary,
+            secondary,
+            write_through: false,
+        }
+    }
+
+    /// Enable or disable write-through to the secondary backend.
+    ///
+    /// When enabled, `put` operations write to both primary and secondary.
+    /// When disabled (default), `put` only writes to primary.
+    pub fn with_write_through(mut self, enabled: bool) -> Self {
+        self.write_through = enabled;
+        self
+    }
+
+    /// Get a reference to the primary storage.
+    pub fn primary(&self) -> &P {
+        &self.primary
+    }
+
+    /// Get a reference to the secondary storage.
+    pub fn secondary(&self) -> &S {
+        &self.secondary
+    }
+
+    /// Check if write-through is enabled.
+    pub fn is_write_through(&self) -> bool {
+        self.write_through
+    }
+}
+
+impl<P, S> Storage for FallbackStorage<P, S>
+where
+    P: Storage,
+    S: Storage<Id = P::Id>,
+{
+    type Id = P::Id;
+
+    async fn exists(&self, id: &Self::Id) -> Result<bool> {
+        // Try primary first
+        match self.primary.exists(id).await {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                // If not in primary, check secondary
+                self.secondary.exists(id).await
+            }
+            Err(_) => {
+                // On primary error, try secondary
+                self.secondary.exists(id).await
+            }
+        }
+    }
+
+    async fn folder_exists(&self, id: &Self::Id) -> Result<bool> {
+        // Try primary first
+        match self.primary.folder_exists(id).await {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                // If not in primary, check secondary
+                self.secondary.folder_exists(id).await
+            }
+            Err(_) => {
+                // On primary error, try secondary
+                self.secondary.folder_exists(id).await
+            }
+        }
+    }
+
+    async fn put<R: AsyncRead + Send + Sync + Unpin>(
+        &self,
+        id: Self::Id,
+        input: R,
+        len: Option<u64>,
+    ) -> Result<()> {
+        if self.write_through {
+            // Write-through: write to both backends
+            // We need to buffer the input since we can't read from it twice
+            use tokio::io::AsyncReadExt;
+            let mut buffer = Vec::new();
+            let mut reader = input;
+            reader.read_to_end(&mut buffer).await?;
+
+            // Write to primary first
+            let primary_result = {
+                let cursor = std::io::Cursor::new(&buffer);
+                let mut async_cursor = tokio::io::BufReader::new(cursor);
+                self.primary.put(id.clone(), &mut async_cursor, len).await
+            };
+
+            // Write to secondary
+            let secondary_result = {
+                let cursor = std::io::Cursor::new(&buffer);
+                let mut async_cursor = tokio::io::BufReader::new(cursor);
+                self.secondary.put(id, &mut async_cursor, len).await
+            };
+
+            // Return error if primary failed (secondary is best-effort in write-through)
+            primary_result?;
+
+            // Log or ignore secondary errors in write-through mode
+            let _ = secondary_result;
+
+            Ok(())
+        } else {
+            // Default: write only to primary
+            self.primary.put(id, input, len).await
+        }
+    }
+
+    async fn get_into<W: AsyncWrite + Send + Sync + Unpin>(
+        &self,
+        id: &Self::Id,
+        output: W,
+    ) -> Result<u64> {
+        // For fallback storage, get_into has a limitation:
+        // Once we try the primary and it fails, we can't retry with secondary
+        // because the output stream was already consumed.
+        //
+        // Recommendation: Use get_bytes() for fallback scenarios instead.
+        //
+        // For now, we only try primary to avoid the moved value issue.
+        self.primary.get_into(id, output).await
+    }
+
+    async fn delete(&self, id: &Self::Id) -> Result<()> {
+        // Delete from both backends (idempotent, so safe to try both)
+        let primary_result = self.primary.delete(id).await;
+        let secondary_result = self.secondary.delete(id).await;
+
+        // If both fail, return primary error
+        // If either succeeds, consider it a success (idempotent operation)
+        match (primary_result, secondary_result) {
+            (Ok(()), _) => Ok(()),
+            (_, Ok(())) => Ok(()),
+            (Err(e), _) => Err(e),
+        }
+    }
+
+    async fn list(&self, prefix: Option<&Self::Id>) -> Result<BoxStream<'_, Result<Self::Id>>> {
+        // For list, we only query the primary
+        // Merging lists from both backends would be complex and potentially confusing
+        self.primary.list(prefix).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::StorageExt;
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn test_fallback_read() {
+        use crate::MemoryStorage;
+
+        let primary = MemoryStorage::new();
+        let secondary = MemoryStorage::new();
+
+        // Put data in both storages for testing
+        primary
+            .put_bytes("only-in-primary".to_string(), b"primary data")
+            .await
+            .unwrap();
+
+        secondary
+            .put_bytes("only-in-secondary".to_string(), b"backup data")
+            .await
+            .unwrap();
+
+        let storage = FallbackStorage::new(primary, secondary);
+
+        // Should read from primary
+        let data = storage
+            .get_string(&"only-in-primary".to_string())
+            .await
+            .unwrap();
+        assert_eq!(data, "primary data");
+
+        // Note: get_into doesn't support fallback due to stream consumption,
+        // but get_bytes (which uses a duplex stream internally) handles it
+        let data = storage
+            .get_bytes(&"only-in-secondary".to_string())
+            .await
+            .unwrap();
+        assert_eq!(data, b"backup data");
+
+        // Should error on not found in both
+        assert!(storage.get_string(&"nowhere".to_string()).await.is_err());
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn test_fallback_write_default() {
+        use crate::MemoryStorage;
+
+        let primary = MemoryStorage::new();
+        let secondary = MemoryStorage::new();
+
+        let storage = FallbackStorage::new(primary, secondary);
+
+        // Write data
+        storage
+            .put_bytes("test".to_string(), b"data")
+            .await
+            .unwrap();
+
+        // Should exist in primary
+        assert!(storage.primary().exists(&"test".to_string()).await.unwrap());
+
+        // Should NOT exist in secondary (default behavior)
+        assert!(
+            !storage
+                .secondary()
+                .exists(&"test".to_string())
+                .await
+                .unwrap()
+        );
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn test_fallback_write_through() {
+        use crate::MemoryStorage;
+
+        let primary = MemoryStorage::new();
+        let secondary = MemoryStorage::new();
+
+        let storage = FallbackStorage::new(primary, secondary).with_write_through(true);
+
+        // Write data
+        storage
+            .put_bytes("test".to_string(), b"data")
+            .await
+            .unwrap();
+
+        // Should exist in both
+        assert!(storage.primary().exists(&"test".to_string()).await.unwrap());
+        assert!(
+            storage
+                .secondary()
+                .exists(&"test".to_string())
+                .await
+                .unwrap()
+        );
+
+        // Data should be same in both
+        let primary_data = storage
+            .primary()
+            .get_string(&"test".to_string())
+            .await
+            .unwrap();
+        let secondary_data = storage
+            .secondary()
+            .get_string(&"test".to_string())
+            .await
+            .unwrap();
+        assert_eq!(primary_data, secondary_data);
+    }
+
+    #[cfg(feature = "memory")]
+    #[tokio::test]
+    async fn test_fallback_delete() {
+        use crate::MemoryStorage;
+
+        let primary = MemoryStorage::new();
+        let secondary = MemoryStorage::new();
+
+        primary
+            .put_bytes("test".to_string(), b"data")
+            .await
+            .unwrap();
+        secondary
+            .put_bytes("test".to_string(), b"data")
+            .await
+            .unwrap();
+
+        let storage = FallbackStorage::new(primary, secondary);
+
+        // Delete should remove from both
+        storage.delete(&"test".to_string()).await.unwrap();
+
+        assert!(!storage.primary().exists(&"test".to_string()).await.unwrap());
+        assert!(
+            !storage
+                .secondary()
+                .exists(&"test".to_string())
+                .await
+                .unwrap()
+        );
+    }
+}

@@ -41,6 +41,7 @@ pub mod adapters {
     pub mod local;
     #[cfg(feature = "memory")]
     pub mod memory;
+    pub mod multi;
     #[cfg(feature = "onedrive")]
     pub mod onedrive;
     #[cfg(feature = "s3")]
@@ -67,6 +68,7 @@ pub use adapters::gdrive::*;
 pub use adapters::local::*;
 #[cfg(feature = "memory")]
 pub use adapters::memory::*;
+pub use adapters::multi;
 #[cfg(feature = "onedrive")]
 pub use adapters::onedrive::*;
 #[cfg(feature = "s3")]
