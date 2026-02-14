@@ -7,28 +7,31 @@ use tokio::io::{AsyncRead, AsyncWrite};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteStrategy {
     /// All backends must succeed or operation fails.
-    /// If `rollback` is true, successful writes are deleted on partial failure.
     AllOrFail { rollback: bool },
 
     /// At least one backend must succeed.
-    AtLeastOne,
+    AtLeastOne { rollback: bool },
 
     /// Majority of backends must succeed.
-    Quorum,
+    Quorum { rollback: bool },
 }
 
 impl WriteStrategy {
     /// Check if this strategy requires rollback on failure.
     pub fn should_rollback(&self) -> bool {
-        matches!(self, WriteStrategy::AllOrFail { rollback: true })
+        match self {
+            WriteStrategy::AllOrFail { rollback }
+            | WriteStrategy::AtLeastOne { rollback }
+            | WriteStrategy::Quorum { rollback } => *rollback,
+        }
     }
 
     /// Get the number of required successes for the given backend count.
     pub fn required_successes(&self, backend_count: usize) -> usize {
         match self {
             WriteStrategy::AllOrFail { .. } => backend_count,
-            WriteStrategy::AtLeastOne => 1,
-            WriteStrategy::Quorum => (backend_count / 2) + 1,
+            WriteStrategy::AtLeastOne { .. } => 1,
+            WriteStrategy::Quorum { .. } => (backend_count / 2) + 1,
         }
     }
 }
@@ -334,7 +337,7 @@ mod tests {
             .add_backend(MemoryStorage::new())
             .add_backend(MemoryStorage::new())
             .add_backend(MemoryStorage::new())
-            .write_strategy(WriteStrategy::AllOrFail { rollback: false })
+            .write_strategy(WriteStrategy::AllOrFail { rollback: true })
             .build();
 
         // Write data
@@ -404,7 +407,7 @@ mod tests {
         let storage = MirrorStorage::builder()
             .add_backend(MemoryStorage::new())
             .add_backend(MemoryStorage::new())
-            .write_strategy(WriteStrategy::AtLeastOne)
+            .write_strategy(WriteStrategy::AtLeastOne { rollback: false })
             .build();
 
         storage
@@ -440,7 +443,7 @@ mod tests {
             .add_backend(MemoryStorage::new())
             .add_backend(MemoryStorage::new())
             .add_backend(MemoryStorage::new())
-            .write_strategy(WriteStrategy::Quorum)
+            .write_strategy(WriteStrategy::Quorum { rollback: false })
             .build();
 
         storage
@@ -450,7 +453,10 @@ mod tests {
 
         // All should succeed in this test
         assert_eq!(storage.backend_count(), 3);
-        assert_eq!(storage.write_strategy(), WriteStrategy::Quorum);
+        assert_eq!(
+            storage.write_strategy(),
+            WriteStrategy::Quorum { rollback: false }
+        );
     }
 
     #[cfg(feature = "memory")]

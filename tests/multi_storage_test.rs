@@ -137,7 +137,7 @@ async fn test_mirror_quorum_strategy() {
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
-        .write_strategy(WriteStrategy::Quorum)
+        .write_strategy(WriteStrategy::Quorum { rollback: false })
         .build();
 
     storage
@@ -146,7 +146,10 @@ async fn test_mirror_quorum_strategy() {
         .unwrap();
 
     assert_eq!(storage.backend_count(), 3);
-    assert_eq!(storage.write_strategy(), WriteStrategy::Quorum);
+    assert_eq!(
+        storage.write_strategy(),
+        WriteStrategy::Quorum { rollback: false }
+    );
 }
 
 #[tokio::test]
@@ -207,4 +210,27 @@ async fn test_mirror_error_contains_details() {
     // - details.has_successes(), details.has_failures(), details.has_rollback_errors()
     // - details.failed_indices(), details.successful_indices()
     assert_eq!(storage.backend_count(), 2);
+}
+
+#[tokio::test]
+async fn test_mirror_quorum_with_rollback() {
+    let storage = MirrorStorage::builder()
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .add_backend(MemoryStorage::new())
+        .write_strategy(WriteStrategy::Quorum { rollback: true })
+        .build();
+
+    // Quorum requires 2 of 3 backends to succeed
+    storage
+        .put_bytes("test.txt".to_string(), b"data")
+        .await
+        .unwrap();
+
+    // On failure with rollback enabled, successful writes would be rolled back
+    assert_eq!(storage.backend_count(), 3);
+    assert_eq!(
+        storage.write_strategy(),
+        WriteStrategy::Quorum { rollback: true }
+    );
 }

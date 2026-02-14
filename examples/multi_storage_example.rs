@@ -112,7 +112,7 @@ async fn example_3_fallback_with_mirror() -> Result<(), Box<dyn std::error::Erro
     let mirrored_primary = MirrorStorage::builder()
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
-        .write_strategy(WriteStrategy::Quorum)
+        .write_strategy(WriteStrategy::Quorum { rollback: true })
         .build();
 
     let cache = MemoryStorage::new();

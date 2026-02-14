@@ -268,10 +268,12 @@ let storage = MirrorStorage::builder()
 storage.put_bytes("file.txt".to_string(), b"data").await?;
 ```
 
-Write strategies:
-- `AllOrFail { rollback: bool }` - All must succeed or fail (optionally rollback)
-- `AtLeastOne` - Succeed if any backend succeeds
-- `Quorum` - Majority must succeed
+Write strategies (all support rollback):
+- `AllOrFail { rollback }` - All must succeed
+- `AtLeastOne { rollback }` - At least one must succeed
+- `Quorum { rollback }` - Majority must succeed
+
+When rollback is enabled and operation fails, successful writes are automatically deleted.
 
 On failure, `Error::MirrorFailure(details)` provides detailed information:
 
