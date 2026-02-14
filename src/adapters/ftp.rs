@@ -7,28 +7,9 @@ use suppaftp::AsyncFtpStream;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 
-/// FTP adapter implementing [`Storage`].
+/// FTP storage adapter using suppaftp.
 ///
-/// This adapter uses suppaftp to provide FTP (File Transfer Protocol) access.
-///
-/// # Identifier
-/// - `Id` is a `String` representing the file path on the remote server.
-/// - Paths should be relative (e.g., `"folder/file.txt"`).
-///
-/// # Authentication
-/// This adapter supports username/password authentication.
-///
-/// # Example
-/// ```ignore
-/// use stowage::FtpStorage;
-///
-/// let storage = FtpStorage::new(
-///     "ftp.example.com:21",
-///     "username",
-///     "password",
-///     None,  // Optional base path
-/// ).await?;
-/// ```
+/// Supports username/password authentication.
 pub struct FtpStorage {
     host: String,
     port: u16,
@@ -54,8 +35,6 @@ impl std::fmt::Debug for FtpStorage {
 
 impl FtpStorage {
     /// Create a new FTP storage adapter.
-    ///
-    /// # Arguments
     /// - `address`: The FTP server address (e.g., "ftp.example.com:21" or "192.168.1.1:21")
     /// - `username`: Username for authentication
     /// - `password`: Password for authentication

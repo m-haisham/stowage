@@ -1,10 +1,10 @@
 # Stowage
 
-A unified, async storage abstraction for Rust with support for multiple backends including local filesystem, cloud storage, and file transfer protocols.
+A unified async storage abstraction for Rust supporting multiple backends.
 
 ## Features
 
-Stowage provides a single `Storage` trait that works across multiple storage backends:
+A single `Storage` trait works across all backends:
 
 ### File Transfer Protocols
 - **SFTP** - SSH File Transfer Protocol (`sftp` feature)
@@ -34,12 +34,7 @@ Add stowage to your `Cargo.toml`:
 stowage = { version = "0.1", features = ["sftp", "ftp"] }
 ```
 
-Or enable specific features:
 
-```toml
-[dependencies]
-stowage = { version = "0.1", features = ["sftp", "ftp", "s3", "local"] }
-```
 
 ## Usage
 
@@ -168,42 +163,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## The Storage Trait
+## Core Traits
 
-All adapters implement the `Storage` trait:
+### Storage
 
-```rust
-pub trait Storage: Send + Sync + Debug {
-    type Id: Clone + Debug + Send + Sync + 'static;
+All adapters implement the `Storage` trait with methods for:
+- `exists` - Check if an item exists
+- `put` - Store data from an `AsyncRead` stream
+- `get_into` - Retrieve data to an `AsyncWrite` stream
+- `delete` - Remove an item
+- `list` - List items with optional prefix filtering
 
-    async fn exists(&self, id: &Self::Id) -> Result<bool>;
-    async fn put<R: AsyncRead + Send + Sync + Unpin>(
-        &self,
-        id: Self::Id,
-        input: R,
-        len: Option<u64>,
-    ) -> Result<()>;
-    async fn get_into<W: AsyncWrite + Send + Sync + Unpin>(
-        &self,
-        id: &Self::Id,
-        output: W,
-    ) -> Result<u64>;
-    async fn delete(&self, id: &Self::Id) -> Result<()>;
-    async fn list(
-        &self,
-        prefix: Option<&Self::Id>,
-    ) -> Result<BoxStream<'_, Result<Self::Id>>>;
-}
-```
+### StorageExt
 
-## StorageExt Helpers
-
-The `StorageExt` trait provides convenient helper methods:
-
-- `get_bytes(&self, id)` - Download file as `Vec<u8>`
-- `get_string(&self, id)` - Download and decode as UTF-8 string
-- `put_bytes(&self, id, bytes)` - Upload from byte slice
-- `copy_to(&self, id, dest)` - Copy between storage backends
+Convenience methods built on `Storage`:
+- `get_bytes` - Download as `Vec<u8>`
+- `get_string` - Download as UTF-8 string
+- `put_bytes` - Upload from byte slice
+- `copy_to` - Copy between storage backends
 
 ## Security
 
@@ -211,27 +188,7 @@ Sensitive fields like passwords and tokens are protected using the `secrecy` cra
 
 ## Error Handling
 
-All operations return `stowage::Result<T>` with a unified `Error` type:
-
-- `Error::NotFound` - File not found
-- `Error::PermissionDenied` - Authentication or authorization failure
-- `Error::Connection` - Network/connection errors
-- `Error::Io` - I/O errors
-- `Error::Generic` - Other errors with context
-
-## Protocol-Specific Notes
-
-### SFTP
-- Uses SSH2 library for secure file transfers
-- Supports password authentication (key-based auth can be added)
-- Thread-safe with connection pooling via `Arc<Mutex<Session>>`
-- Automatically creates parent directories for uploads
-
-### FTP
-- Uses suppaftp library with async support
-- Currently supports basic FTP (FTPS/TLS support can be added)
-- Binary transfer mode enabled by default
-- Idempotent operations (delete returns success if file doesn't exist)
+All operations return `stowage::Result<T>` with a unified `Error` type.
 
 ## License
 

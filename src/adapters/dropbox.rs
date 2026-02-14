@@ -6,22 +6,9 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-/// Dropbox adapter implementing [`Storage`].
+/// Dropbox storage adapter using OAuth2 access tokens.
 ///
-/// # Identifier
-/// - `Id` is a `String` representing the file path (e.g., `"/folder/file.txt"`).
-/// - All paths must start with "/" as per Dropbox API requirements.
-///
-/// # Authentication
-/// This adapter uses an OAuth2 access token for authentication.
-/// You must obtain a token from Dropbox's OAuth flow.
-///
-/// # Example
-/// ```ignore
-/// use stowage::DropboxStorage;
-///
-/// let storage = DropboxStorage::new("your_access_token_here");
-/// ```
+/// File paths must start with "/" as per Dropbox API requirements.
 #[derive(Clone, Debug)]
 pub struct DropboxStorage {
     client: Client,

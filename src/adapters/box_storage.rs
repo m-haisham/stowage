@@ -6,29 +6,10 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Box.com adapter implementing [`Storage`].
+/// Box.com storage adapter using OAuth2 access tokens.
 ///
-/// # Identifier
-/// - `Id` is a `String` representing the Box file ID (e.g., `"123456789"`).
-/// - Box uses numeric file IDs, not paths.
-/// - For the `put` operation, the `id` parameter is used as the filename.
-///
-/// # Authentication
-/// This adapter uses an OAuth2 access token for authentication.
-/// You must obtain a token from Box's OAuth 2.0 flow.
-///
-/// # Folder Context
-/// For uploads, you need to specify a parent folder ID. By default, uploads go to
-/// the root folder (ID "0"). You can customize this via `with_folder()`.
-///
-/// # Example
-/// ```ignore
-/// use stowage::BoxStorage;
-///
-/// let storage = BoxStorage::new("your_access_token_here");
-/// // Or specify a folder:
-/// let storage = BoxStorage::with_folder("your_access_token_here", "12345");
-/// ```
+/// Uses numeric file IDs. For `put` operations, the `id` parameter is used as the filename.
+/// Uploads default to root folder (ID "0"), customizable via `with_folder()`.
 #[derive(Clone, Debug)]
 pub struct BoxStorage {
     client: Client,

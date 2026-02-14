@@ -3,30 +3,21 @@ use futures::stream::{self, BoxStream};
 use std::path::{Component, Path, PathBuf};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-/// A local filesystem adapter.
+/// Local filesystem storage using relative paths under a root directory.
 ///
-/// - `Id` is a `String` representing a *relative* object path (e.g. `"foo/bar.txt"`).
-/// - All objects are stored under a configured root directory.
-/// - Paths are validated to prevent directory traversal (`..`) and absolute paths.
-///
-/// This implementation is intended to work with a `Storage` trait that uses Tokio I/O:
-/// - `put` reads from a `tokio::io::AsyncRead`
-/// - `get_into` writes into a `tokio::io::AsyncWrite`
-///
-/// If your current `Storage` trait still uses `futures::io::AsyncRead`, you'll need to
-/// refactor it (as discussed) for this adapter to compile.
+/// Paths are validated to prevent directory traversal and absolute paths.
 #[derive(Clone, Debug)]
 pub struct LocalStorage {
     root: PathBuf,
 }
 
 impl LocalStorage {
-    /// Create a new local storage rooted at `root`.
+    /// Create storage rooted at `root`.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
     }
 
-    /// Return the configured root directory.
+    /// Get the root directory.
     pub fn root(&self) -> &Path {
         &self.root
     }

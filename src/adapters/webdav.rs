@@ -5,32 +5,10 @@ use reqwest::{Client, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-/// WebDAV adapter implementing [`Storage`].
+/// WebDAV storage adapter using HTTP Basic Authentication.
 ///
-/// WebDAV is supported by many services including:
-/// - Nextcloud
-/// - ownCloud
-/// - Box
-/// - Apache mod_dav
-/// - And many others
-///
-/// # Identifier
-/// - `Id` is a `String` representing the file path relative to the WebDAV root.
-/// - Paths should not start with "/" (e.g., `"folder/file.txt"`).
-///
-/// # Authentication
-/// This adapter uses HTTP Basic Authentication.
-///
-/// # Example
-/// ```ignore
-/// use stowage::WebDAVStorage;
-///
-/// let storage = WebDAVStorage::new(
-///     "https://cloud.example.com/remote.php/dav/files/username",
-///     "username",
-///     "password"
-/// );
-/// ```
+/// Supported by Nextcloud, ownCloud, and other WebDAV-compatible services.
+/// Paths should not start with "/" (e.g., `"folder/file.txt"`).
 #[derive(Clone, Debug)]
 pub struct WebDAVStorage {
     client: Client,

@@ -8,29 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-/// SFTP adapter implementing [`Storage`].
+/// SFTP storage adapter using SSH2 for secure file transfers.
 ///
-/// This adapter uses SSH2 to provide SFTP (SSH File Transfer Protocol) access.
-///
-/// # Identifier
-/// - `Id` is a `String` representing the file path on the remote server.
-/// - Paths can be absolute (e.g., `"/home/user/file.txt"`) or relative to the home directory.
-///
-/// # Authentication
-/// This adapter supports password-based authentication. Key-based authentication
-/// can be added in the future.
-///
-/// # Example
-/// ```ignore
-/// use stowage::SftpStorage;
-///
-/// let storage = SftpStorage::new(
-///     "sftp.example.com:22",
-///     "username",
-///     "password",
-///     None, // Optional base path
-/// ).await?;
-/// ```
+/// Supports password-based authentication.
 pub struct SftpStorage {
     host: String,
     port: u16,
@@ -56,8 +36,6 @@ impl std::fmt::Debug for SftpStorage {
 
 impl SftpStorage {
     /// Create a new SFTP storage adapter.
-    ///
-    /// # Arguments
     /// - `address`: The SFTP server address (e.g., "sftp.example.com:22" or "192.168.1.1:22")
     /// - `username`: Username for authentication
     /// - `password`: Password for authentication

@@ -5,18 +5,9 @@ use reqwest::{Client, StatusCode, Url};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-/// OneDrive adapter implementing [`Storage`] using **native OneDrive item IDs**.
+/// OneDrive storage adapter using native item IDs.
 ///
-/// # Identifier
-/// `Id = String` is the OneDrive item ID (e.g. `12345abcd!123`).
-///
-/// # Auth
-/// Requires a valid OAuth2 access token with `Files.ReadWrite` (or similar) scope.
-///
-/// # Put Semantics
-/// The `put` operation updates an existing file's content by its item ID.
-/// To create new files, you would need to use the OneDrive API directly
-/// to create the file and obtain its item ID first.
+/// Requires OAuth2 access token. The `put` operation updates existing files by ID.
 #[derive(Clone, Debug)]
 pub struct OneDriveStorage {
     client: Client,
@@ -24,12 +15,12 @@ pub struct OneDriveStorage {
     token_provider: TokenProvider,
 }
 
-/// How this adapter obtains the OAuth2 access token.
+/// OAuth2 token provider.
 #[derive(Clone)]
 pub enum TokenProvider {
-    /// A fixed bearer token.
+    /// Fixed bearer token.
     Static(SecretString),
-    /// A user-provided async token callback.
+    /// Async token callback.
     Callback(std::sync::Arc<dyn Fn() -> TokenFuture + Send + Sync>),
 }
 

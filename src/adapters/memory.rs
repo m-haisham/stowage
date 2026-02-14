@@ -5,25 +5,21 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// A simple in-memory `Storage` adapter.
+/// In-memory storage using a `HashMap<String, Vec<u8>>`.
 ///
-/// - `Id` is a `String`.
-/// - Data is stored as raw bytes in a `HashMap`.
-/// - Intended for tests, local development, and ephemeral usage.
-///
-/// This adapter uses Tokio I/O for `get_into`.
+/// Intended for tests and local development.
 #[derive(Clone, Default)]
 pub struct MemoryStorage {
     inner: Arc<RwLock<HashMap<String, Vec<u8>>>>,
 }
 
 impl MemoryStorage {
-    /// Create a new empty in-memory storage.
+    /// Create a new empty storage.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create a new in-memory storage from an existing map.
+    /// Create storage from an existing map.
     pub fn from_map(map: HashMap<String, Vec<u8>>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(map)),
@@ -45,7 +41,7 @@ impl MemoryStorage {
         self.inner.write().expect("poisoned lock").clear();
     }
 
-    /// Get a copy of the bytes for `id` (useful for tests).
+    /// Get a copy of the bytes for `id`.
     pub fn get_bytes(&self, id: &str) -> Result<Vec<u8>> {
         let map = self.inner.read().expect("poisoned lock");
         map.get(id)

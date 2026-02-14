@@ -4,26 +4,7 @@ use reqwest::{Client, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-/// Azure Blob Storage adapter implementing [`Storage`].
-///
-/// # Identifier
-/// - `Id` is a `String` representing the blob name (e.g., `"folder/file.txt"`).
-/// - Blobs are stored in a single container.
-///
-/// # Authentication
-/// This adapter uses a **Shared Access Signature (SAS)** token for authentication.
-/// You can also use account key authentication by constructing the proper Authorization header.
-///
-/// # Example
-/// ```ignore
-/// use stowage::AzureStorage;
-///
-/// let storage = AzureStorage::new(
-///     "mystorageaccount",
-///     "mycontainer",
-///     "sp=racwdl&st=2024-01-01T00:00:00Z&se=2024-12-31T23:59:59Z&spr=https&sv=2021-06-08&sr=c&sig=..."
-/// );
-/// ```
+/// Azure Blob Storage adapter using SAS token authentication.
 #[derive(Clone, Debug)]
 pub struct AzureStorage {
     client: Client,
@@ -35,9 +16,6 @@ pub struct AzureStorage {
 
 impl AzureStorage {
     /// Create a new Azure Blob Storage adapter.
-    ///
-    /// # Arguments
-    /// - `account`: Storage account name (e.g., "mystorageaccount")
     /// - `container`: Container name (e.g., "mycontainer")
     /// - `sas_token`: Shared Access Signature token (without leading '?')
     pub fn new(

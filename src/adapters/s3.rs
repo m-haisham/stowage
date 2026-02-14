@@ -3,17 +3,7 @@ use aws_sdk_s3::{Client, primitives::ByteStream};
 use futures::stream::BoxStream;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// S3 adapter implementing [`Storage`] with `String` identifiers.
-///
-/// # Identifier
-/// `Id = String` is the S3 object key.
-///
-/// # Notes
-/// - This implementation is written to work with a `Storage` trait that has a
-///   **Tokio writer-based** read API (e.g. `get_into`) rather than returning a reader.
-/// - Uploads (`put`) currently buffer the full input into memory because the crate-level
-///   `put` signature takes a `futures::io::AsyncRead`. If you also migrate `put` to
-///   be Tokio-native or accept a stream, this can be made fully streaming.
+/// AWS S3 storage adapter using object keys as identifiers.
 #[derive(Clone, Debug)]
 pub struct S3Storage {
     client: Client,

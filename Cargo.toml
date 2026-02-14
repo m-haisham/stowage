@@ -6,13 +6,12 @@ edition = "2024"
 [features]
 default = []
 
-# Backends / adapters (kept in `src/adapters/`).
+# Storage adapters
 memory = []
 local = ["dep:tokio-util", "dep:bytes"]
 s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-smithy-types", "dep:bytes", "dep:tokio-util"]
 
-# Cloud drive adapters (native item IDs).
-# NOTE: These require OAuth2 tokens and additional wiring in code.
+# Cloud drive adapters (require OAuth2 tokens)
 gdrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio-util"]
 onedrive = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio-util"]
 dropbox = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:bytes", "dep:tokio-util"]
@@ -44,19 +43,19 @@ aws-config = { version = "1.6.1", optional = true }
 aws-sdk-s3 = { version = "1.77.0", optional = true }
 aws-smithy-types = { version = "1.2.13", optional = true }
 
-# HTTP + JSON for Drive/OneDrive/Dropbox/Azure/WebDAV/Box adapters
+# HTTP + JSON for cloud adapters
 reqwest = { version = "0.12.12", default-features = true, features = ["json", "stream", "rustls-tls", "multipart"], optional = true }
 serde = { version = "1.0.218", features = ["derive"], optional = true }
 serde_json = { version = "1.0.139", optional = true }
 urlencoding = { version = "2.1.3", optional = true }
 
-# Security - protect sensitive data
+# Protect sensitive data in debug output
 secrecy = { version = "0.10.3", features = ["serde"] }
 
-# SFTP support via SSH2
+# SFTP via SSH2
 ssh2 = { version = "0.9", optional = true }
 
-# FTP support
+# Async FTP
 suppaftp = { version = "6.0", features = ["async", "async-native-tls"], optional = true }
 
 [dev-dependencies]

@@ -5,21 +5,9 @@ use reqwest::{Client, StatusCode, Url};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-/// Google Drive adapter implementing [`Storage`] using **native Google Drive file IDs**.
+/// Google Drive storage adapter using native file IDs.
 ///
-/// ## Identifier
-/// `Id = String` where the string is the Drive `fileId` (e.g. `"1ZdR3L...abc"`).
-///
-/// ## Auth
-/// This adapter expects you to supply an OAuth2 access token (and refresh it externally).
-///
-/// ## Put Semantics
-/// The `put` operation updates an existing file's content by its file ID.
-/// To create new files, you would need to use the Google Drive API directly
-/// to create the file and obtain its ID first.
-///
-/// ## Feature flags
-/// Intended to be used behind the `gdrive` feature.
+/// Requires OAuth2 access token. The `put` operation updates existing files by ID.
 #[derive(Clone, Debug)]
 pub struct GoogleDriveStorage {
     client: Client,
@@ -27,12 +15,12 @@ pub struct GoogleDriveStorage {
     token_provider: TokenProvider,
 }
 
-/// How this adapter obtains the OAuth2 access token.
+/// OAuth2 token provider.
 #[derive(Clone)]
 pub enum TokenProvider {
-    /// A fixed bearer token.
+    /// Fixed bearer token.
     Static(SecretString),
-    /// A user-provided async token callback.
+    /// Async token callback.
     Callback(std::sync::Arc<dyn Fn() -> TokenFuture + Send + Sync>),
 }
 
