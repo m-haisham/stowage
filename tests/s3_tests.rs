@@ -22,12 +22,17 @@
 //! cargo test --features s3 test_s3_put_and_exists -- --ignored
 //! ```
 
+#[path = "test_common/mod.rs"]
+mod test_common;
+
 #[cfg(feature = "s3")]
 mod s3_integration_tests {
     use aws_config::BehaviorVersion;
     use aws_sdk_s3::Client;
     use aws_sdk_s3::config::{Credentials, Region};
     use stowage::{Error, S3Storage, Storage, StorageExt};
+
+    use super::test_common;
 
     /// Create an S3 client configured for MinIO
     async fn create_minio_client() -> Client {
@@ -108,246 +113,84 @@ mod s3_integration_tests {
         let _ = client.delete_bucket().bucket(&bucket).send().await;
     }
 
-    // Basic operations tests
+    // Common test suite tests
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_put_and_exists() {
-        let storage = setup_test_storage().await;
-        let key = "test.txt".to_string();
-
-        assert!(!storage.exists(&key).await.unwrap());
-
-        let data = b"hello world";
-        storage.put_bytes(key.clone(), data).await.unwrap();
-
-        assert!(storage.exists(&key).await.unwrap());
-
-        cleanup_storage(&storage).await;
+        test_common::test_put_and_exists(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_put_and_get_bytes() {
-        let storage = setup_test_storage().await;
-        let key = "test.txt".to_string();
-        let data = b"hello world";
-
-        storage.put_bytes(key.clone(), data).await.unwrap();
-
-        let retrieved = storage.get_bytes(&key).await.unwrap();
-        assert_eq!(retrieved, data);
-
-        cleanup_storage(&storage).await;
+        test_common::test_put_and_get_bytes(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_get_nonexistent() {
-        let storage = setup_test_storage().await;
-        let key = "nonexistent.txt".to_string();
-
-        let result = storage.get_bytes(&key).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            Error::NotFound(_) => {}   // Expected
-            Error::Connection(_) => {} // Also acceptable for S3 (404 can be wrapped)
-            e => panic!("Expected NotFound or Connection error, got: {:?}", e),
-        }
-
-        cleanup_storage(&storage).await;
+        test_common::test_get_nonexistent(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_delete_existing() {
-        let storage = setup_test_storage().await;
-        let key = "test.txt".to_string();
-        let data = b"hello world";
-
-        storage.put_bytes(key.clone(), data).await.unwrap();
-        assert!(storage.exists(&key).await.unwrap());
-
-        storage.delete(&key).await.unwrap();
-        assert!(!storage.exists(&key).await.unwrap());
-
-        cleanup_storage(&storage).await;
+        test_common::test_delete_existing(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_delete_idempotent() {
-        let storage = setup_test_storage().await;
-        let key = "test.txt".to_string();
-
-        // Delete non-existent file should not error
-        storage.delete(&key).await.unwrap();
-        storage.delete(&key).await.unwrap();
-
-        cleanup_storage(&storage).await;
+        test_common::test_delete_idempotent(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_overwrite() {
-        let storage = setup_test_storage().await;
-        let key = "test.txt".to_string();
-
-        storage.put_bytes(key.clone(), b"original").await.unwrap();
-        storage.put_bytes(key.clone(), b"updated").await.unwrap();
-
-        let retrieved = storage.get_bytes(&key).await.unwrap();
-        assert_eq!(retrieved, b"updated");
-
-        cleanup_storage(&storage).await;
+        test_common::test_overwrite(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_empty_data() {
-        let storage = setup_test_storage().await;
-        let key = "empty.txt".to_string();
-        let data = b"";
-
-        storage.put_bytes(key.clone(), data).await.unwrap();
-
-        assert!(storage.exists(&key).await.unwrap());
-        let retrieved = storage.get_bytes(&key).await.unwrap();
-        assert_eq!(retrieved, data);
-
-        cleanup_storage(&storage).await;
+        test_common::test_empty_data(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_large_data() {
-        let storage = setup_test_storage().await;
-        let key = "large.bin".to_string();
-        let data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
-
-        storage.put_bytes(key.clone(), &data).await.unwrap();
-
-        let retrieved = storage.get_bytes(&key).await.unwrap();
-        assert_eq!(retrieved, data);
-
-        cleanup_storage(&storage).await;
+        test_common::test_large_data(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_binary_data() {
-        let storage = setup_test_storage().await;
-        let key = "binary.dat".to_string();
-        let data: Vec<u8> = (0..=255).collect();
-
-        storage.put_bytes(key.clone(), &data).await.unwrap();
-
-        let retrieved = storage.get_bytes(&key).await.unwrap();
-        assert_eq!(retrieved, data);
-
-        cleanup_storage(&storage).await;
+        test_common::test_binary_data(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_get_into() {
-        let storage = setup_test_storage().await;
-        let key = "test.txt".to_string();
-        let data = b"hello world";
-
-        storage.put_bytes(key.clone(), data).await.unwrap();
-
-        let mut output = Vec::new();
-        let bytes_written = Storage::get_into(&storage, &key, &mut output)
-            .await
-            .unwrap();
-
-        assert_eq!(bytes_written, data.len() as u64);
-        assert_eq!(output, data);
-
-        cleanup_storage(&storage).await;
+        test_common::test_get_into(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_folder_exists() {
-        let storage = setup_test_storage().await;
-
-        // Create files under "folder/"
-        storage
-            .put_bytes("folder/file1.txt".to_string(), b"data1")
-            .await
-            .unwrap();
-
-        storage
-            .put_bytes("folder/file2.txt".to_string(), b"data2")
-            .await
-            .unwrap();
-
-        // Check folder exists (with and without trailing slash)
-        assert!(storage.folder_exists(&"folder".to_string()).await.unwrap());
-        assert!(storage.folder_exists(&"folder/".to_string()).await.unwrap());
-
-        // Non-existent folder should not exist
-        assert!(
-            !storage
-                .folder_exists(&"nonexistent".to_string())
-                .await
-                .unwrap()
-        );
-
-        cleanup_storage(&storage).await;
+        test_common::test_folder_exists(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_folder_exists_nested() {
-        let storage = setup_test_storage().await;
-
-        // Create nested structure
-        storage
-            .put_bytes("root/level1/level2/file.txt".to_string(), b"data")
-            .await
-            .unwrap();
-
-        // All parent folders should exist
-        assert!(storage.folder_exists(&"root".to_string()).await.unwrap());
-        assert!(
-            storage
-                .folder_exists(&"root/level1".to_string())
-                .await
-                .unwrap()
-        );
-        assert!(
-            storage
-                .folder_exists(&"root/level1/level2".to_string())
-                .await
-                .unwrap()
-        );
-
-        cleanup_storage(&storage).await;
+        test_common::test_folder_exists_nested(&mut setup_test_storage).await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_s3_special_characters() {
-        let storage = setup_test_storage().await;
-
-        let paths = vec![
-            "file-with-dashes.txt",
-            "file_with_underscores.txt",
-            "file.multiple.dots.txt",
-        ];
-
-        for path in paths {
-            let key = path.to_string();
-            storage.put_bytes(key.clone(), b"data").await.unwrap();
-            assert!(storage.exists(&key).await.unwrap());
-            let data = storage.get_bytes(&key).await.unwrap();
-            assert_eq!(data, b"data");
-        }
-
-        cleanup_storage(&storage).await;
+        test_common::test_special_characters(&mut setup_test_storage).await;
     }
 
     // S3-specific tests
