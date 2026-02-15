@@ -1,5 +1,6 @@
 [package]
 name = "stowage"
+description = "A unified async storage abstraction layer for Rust, supporting various storage backends and cloud platforms."
 version = "0.1.0"
 edition = "2024"
 
