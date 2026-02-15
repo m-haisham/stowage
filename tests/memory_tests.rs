@@ -4,12 +4,77 @@ use futures::stream::StreamExt;
 use std::collections::HashMap;
 use stowage::{Error, MemoryStorage, Storage, StorageExt};
 
-mod common;
+#[path = "test_common/mod.rs"]
+mod test_common;
 
-// Use the common test suite for MemoryStorage
-storage_test_suite!(setup = || async { MemoryStorage::new() });
+// Common test suite tests
 
-// MemoryStorage-specific tests (not in common suite)
+#[tokio::test]
+async fn test_put_and_exists() {
+    test_common::test_put_and_exists(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_put_and_get_bytes() {
+    test_common::test_put_and_get_bytes(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_get_nonexistent() {
+    test_common::test_get_nonexistent(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_delete_existing() {
+    test_common::test_delete_existing(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_delete_idempotent() {
+    test_common::test_delete_idempotent(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_overwrite() {
+    test_common::test_overwrite(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_empty_data() {
+    test_common::test_empty_data(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_large_data() {
+    test_common::test_large_data(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_binary_data() {
+    test_common::test_binary_data(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_get_into() {
+    test_common::test_get_into(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_folder_exists() {
+    test_common::test_folder_exists(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_folder_exists_nested() {
+    test_common::test_folder_exists_nested(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_special_characters() {
+    test_common::test_special_characters(&mut || async { MemoryStorage::new() }).await;
+}
+
+// MemoryStorage-specific tests
 
 #[tokio::test]
 async fn test_new_storage_is_empty() {
@@ -27,132 +92,6 @@ async fn test_from_map() {
     let storage = MemoryStorage::from_map(map);
     assert_eq!(storage.len(), 2);
     assert!(!storage.is_empty());
-}
-
-#[tokio::test]
-async fn test_put_and_exists() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-
-    assert!(!storage.exists(&id).await.unwrap());
-
-    let data = b"hello world";
-    storage.put_bytes(id.clone(), data).await.unwrap();
-
-    assert!(storage.exists(&id).await.unwrap());
-    assert_eq!(storage.len(), 1);
-}
-
-#[tokio::test]
-async fn test_put_and_get_bytes() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-    let data = b"hello world";
-
-    storage.put_bytes(id.clone(), data).await.unwrap();
-
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, data);
-}
-
-#[tokio::test]
-async fn test_put_and_get_into() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-    let data = b"hello world";
-
-    storage.put_bytes(id.clone(), data).await.unwrap();
-
-    let mut output = Vec::new();
-    let bytes_written = Storage::get_into(&storage, &id, &mut output).await.unwrap();
-
-    assert_eq!(bytes_written, data.len() as u64);
-    assert_eq!(output, data);
-}
-
-#[tokio::test]
-async fn test_put_empty_data() {
-    let storage = MemoryStorage::new();
-    let id = "empty.txt".to_string();
-    let data = b"";
-
-    storage.put_bytes(id.clone(), data).await.unwrap();
-
-    assert!(storage.exists(&id).await.unwrap());
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, data);
-}
-
-#[tokio::test]
-async fn test_put_large_data() {
-    let storage = MemoryStorage::new();
-    let id = "large.bin".to_string();
-    let data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
-
-    storage.put_bytes(id.clone(), &data).await.unwrap();
-
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, data);
-}
-
-#[tokio::test]
-async fn test_get_nonexistent_returns_error() {
-    let storage = MemoryStorage::new();
-    let id = "nonexistent.txt".to_string();
-
-    let result = StorageExt::get_bytes(&storage, &id).await;
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), Error::NotFound(_)));
-}
-
-#[tokio::test]
-async fn test_get_into_nonexistent_returns_error() {
-    let storage = MemoryStorage::new();
-    let id = "nonexistent.txt".to_string();
-    let mut output = Vec::new();
-
-    let result = Storage::get_into(&storage, &id, &mut output).await;
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), Error::NotFound(_)));
-}
-
-#[tokio::test]
-async fn test_delete_existing() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-    let data = b"hello world";
-
-    storage.put_bytes(id.clone(), data).await.unwrap();
-    assert!(storage.exists(&id).await.unwrap());
-    assert_eq!(storage.len(), 1);
-
-    storage.delete(&id).await.unwrap();
-
-    assert!(!storage.exists(&id).await.unwrap());
-    assert_eq!(storage.len(), 0);
-}
-
-#[tokio::test]
-async fn test_delete_nonexistent_is_idempotent() {
-    let storage = MemoryStorage::new();
-    let id = "nonexistent.txt".to_string();
-
-    // Should not error
-    storage.delete(&id).await.unwrap();
-    storage.delete(&id).await.unwrap();
-}
-
-#[tokio::test]
-async fn test_overwrite_existing() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-
-    storage.put_bytes(id.clone(), b"original").await.unwrap();
-    storage.put_bytes(id.clone(), b"updated").await.unwrap();
-
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, b"updated");
-    assert_eq!(storage.len(), 1);
 }
 
 #[tokio::test]
@@ -494,107 +433,19 @@ async fn test_debug_impl() {
 }
 
 #[tokio::test]
-async fn test_special_characters_in_id() {
+async fn test_len_after_operations() {
     let storage = MemoryStorage::new();
+    assert_eq!(storage.len(), 0);
 
-    let ids = vec![
-        "file with spaces.txt",
-        "файл.txt", // Cyrillic
-        "文件.txt", // Chinese
-        "file-with-dashes.txt",
-        "file_with_underscores.txt",
-        "file.multiple.dots.txt",
-    ];
+    storage.put_bytes("a.txt".to_string(), b"1").await.unwrap();
+    assert_eq!(storage.len(), 1);
 
-    for id in ids {
-        storage.put_bytes(id.to_string(), b"data").await.unwrap();
-        assert!(storage.exists(&id.to_string()).await.unwrap());
-        let data = StorageExt::get_bytes(&storage, &id.to_string())
-            .await
-            .unwrap();
-        assert_eq!(data, b"data");
-    }
-}
+    storage.put_bytes("b.txt".to_string(), b"2").await.unwrap();
+    assert_eq!(storage.len(), 2);
 
-#[tokio::test]
-async fn test_binary_data() {
-    let storage = MemoryStorage::new();
-    let id = "binary.dat".to_string();
-    let data: Vec<u8> = (0..=255).collect();
+    storage.delete(&"a.txt".to_string()).await.unwrap();
+    assert_eq!(storage.len(), 1);
 
-    storage.put_bytes(id.clone(), &data).await.unwrap();
-
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, data);
-}
-
-#[tokio::test]
-async fn test_folder_exists_with_trailing_slash() {
-    let storage = MemoryStorage::new();
-
-    // Create files under "folder/"
-    storage
-        .put_bytes("folder/file1.txt".to_string(), b"data1")
-        .await
-        .unwrap();
-    storage
-        .put_bytes("folder/file2.txt".to_string(), b"data2")
-        .await
-        .unwrap();
-
-    // Check folder exists (with trailing slash)
-    assert!(storage.folder_exists(&"folder/".to_string()).await.unwrap());
-
-    // Check folder exists (without trailing slash)
-    assert!(storage.folder_exists(&"folder".to_string()).await.unwrap());
-}
-
-#[tokio::test]
-async fn test_folder_exists_nonexistent() {
-    let storage = MemoryStorage::new();
-
-    // Create some files
-    storage
-        .put_bytes("docs/readme.txt".to_string(), b"data")
-        .await
-        .unwrap();
-
-    // Check non-existent folder
-    assert!(!storage.folder_exists(&"images".to_string()).await.unwrap());
-    assert!(!storage.folder_exists(&"images/".to_string()).await.unwrap());
-}
-
-#[tokio::test]
-async fn test_folder_exists_nested() {
-    let storage = MemoryStorage::new();
-
-    // Create nested structure
-    storage
-        .put_bytes("root/level1/level2/file.txt".to_string(), b"data")
-        .await
-        .unwrap();
-
-    // All parent folders should exist
-    assert!(storage.folder_exists(&"root".to_string()).await.unwrap());
-    assert!(
-        storage
-            .folder_exists(&"root/level1".to_string())
-            .await
-            .unwrap()
-    );
-    assert!(
-        storage
-            .folder_exists(&"root/level1/level2".to_string())
-            .await
-            .unwrap()
-    );
-}
-
-#[tokio::test]
-async fn test_folder_exists_empty_storage() {
-    let storage = MemoryStorage::new();
-
-    // No folders should exist in empty storage
-    assert!(!storage.folder_exists(&"any".to_string()).await.unwrap());
-    assert!(!storage.folder_exists(&"folder/".to_string()).await.unwrap());
+    storage.delete(&"b.txt".to_string()).await.unwrap();
+    assert_eq!(storage.len(), 0);
 }
