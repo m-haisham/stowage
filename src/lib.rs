@@ -242,14 +242,18 @@ pub trait StorageExt: Storage {
             let mut buf: Vec<u8> = Vec::new();
             let (mut client, mut server) = tokio::io::duplex(64 * 1024);
 
-            let download_fut = self.get_into(id, &mut server);
+            let download_fut = async {
+                let result = self.get_into(id, &mut server).await;
+                drop(server);
+                result
+            };
+
             let read_fut = async {
                 client.read_to_end(&mut buf).await?;
                 Result::<()>::Ok(())
             };
 
             let (_written, _) = tokio::try_join!(download_fut, read_fut)?;
-            drop(server);
 
             Ok(buf)
         }
@@ -288,7 +292,11 @@ pub trait StorageExt: Storage {
         async move {
             let (mut client, mut server) = tokio::io::duplex(64 * 1024);
 
-            let download_fut = self.get_into(id, &mut server);
+            let download_fut = async {
+                let result = self.get_into(id, &mut server).await;
+                drop(server); // Close server end so client's read_to_end can complete
+                result
+            };
 
             let upload_fut = async { dest.put(id.clone(), &mut client, None).await };
 
