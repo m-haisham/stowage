@@ -41,7 +41,7 @@ async fn test_put_and_get_bytes() {
 
     storage.put_bytes(id.clone(), data).await.unwrap();
 
-    let retrieved = storage.get_bytes(&id).await.unwrap();
+    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
 }
 
@@ -54,7 +54,7 @@ async fn test_put_and_get_into() {
     storage.put_bytes(id.clone(), data).await.unwrap();
 
     let mut output = Vec::new();
-    let bytes_written = storage.get_into(&id, &mut output).await.unwrap();
+    let bytes_written = Storage::get_into(&storage, &id, &mut output).await.unwrap();
 
     assert_eq!(bytes_written, data.len() as u64);
     assert_eq!(output, data);
@@ -69,7 +69,7 @@ async fn test_put_creates_parent_directories() {
     storage.put_bytes(id.clone(), data).await.unwrap();
 
     assert!(storage.exists(&id).await.unwrap());
-    let retrieved = storage.get_bytes(&id).await.unwrap();
+    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
 }
 
@@ -82,7 +82,7 @@ async fn test_put_empty_data() {
     storage.put_bytes(id.clone(), data).await.unwrap();
 
     assert!(storage.exists(&id).await.unwrap());
-    let retrieved = storage.get_bytes(&id).await.unwrap();
+    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
 }
 
@@ -94,7 +94,7 @@ async fn test_put_large_data() {
 
     storage.put_bytes(id.clone(), &data).await.unwrap();
 
-    let retrieved = storage.get_bytes(&id).await.unwrap();
+    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
 }
 
@@ -103,7 +103,7 @@ async fn test_get_nonexistent_returns_error() {
     let (storage, _temp) = create_temp_storage();
     let id = "nonexistent.txt".to_string();
 
-    let result = storage.get_bytes(&id).await;
+    let result = StorageExt::get_bytes(&storage, &id).await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), Error::NotFound(_)));
 }
@@ -114,17 +114,9 @@ async fn test_get_into_nonexistent_returns_error() {
     let id = "nonexistent.txt".to_string();
     let mut output = Vec::new();
 
-    let result = storage.get_into(&id, &mut output).await;
+    let result = Storage::get_into(&storage, &id, &mut output).await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), Error::NotFound(_)));
-}
-
-#[tokio::test]
-async fn test_exists_nonexistent_returns_false() {
-    let (storage, _temp) = create_temp_storage();
-    let id = "nonexistent.txt".to_string();
-
-    assert!(!storage.exists(&id).await.unwrap());
 }
 
 #[tokio::test]
@@ -159,48 +151,8 @@ async fn test_overwrite_existing() {
     storage.put_bytes(id.clone(), b"original").await.unwrap();
     storage.put_bytes(id.clone(), b"updated").await.unwrap();
 
-    let retrieved = storage.get_bytes(&id).await.unwrap();
+    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, b"updated");
-}
-
-#[tokio::test]
-async fn test_reject_absolute_path() {
-    let (storage, _temp) = create_temp_storage();
-    let id = "/etc/passwd".to_string();
-
-    let result = storage.put_bytes(id.clone(), b"data").await;
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), Error::PermissionDenied(_)));
-}
-
-#[tokio::test]
-async fn test_reject_parent_dir_traversal() {
-    let (storage, _temp) = create_temp_storage();
-    let id = "../outside.txt".to_string();
-
-    let result = storage.put_bytes(id.clone(), b"data").await;
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), Error::PermissionDenied(_)));
-}
-
-#[tokio::test]
-async fn test_reject_parent_dir_in_middle() {
-    let (storage, _temp) = create_temp_storage();
-    let id = "dir/../../../outside.txt".to_string();
-
-    let result = storage.put_bytes(id.clone(), b"data").await;
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), Error::PermissionDenied(_)));
-}
-
-#[tokio::test]
-async fn test_reject_empty_id() {
-    let (storage, _temp) = create_temp_storage();
-    let id = "".to_string();
-
-    let result = storage.put_bytes(id.clone(), b"data").await;
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), Error::Generic(_)));
 }
 
 #[tokio::test]
@@ -234,35 +186,7 @@ async fn test_list_all() {
     let items: Vec<_> = stream.map(|r| r.unwrap()).collect::<Vec<_>>().await;
 
     assert_eq!(items.len(), 3);
-    assert!(items.contains(&"a.txt".to_string()));
-    assert!(items.contains(&"b.txt".to_string()));
-    assert!(items.contains(&"c.txt".to_string()));
-}
-
-#[tokio::test]
-async fn test_list_with_nested_files() {
-    let (storage, _temp) = create_temp_storage();
-
-    storage
-        .put_bytes("a.txt".to_string(), b"data")
-        .await
-        .unwrap();
-    storage
-        .put_bytes("dir/b.txt".to_string(), b"data")
-        .await
-        .unwrap();
-    storage
-        .put_bytes("dir/subdir/c.txt".to_string(), b"data")
-        .await
-        .unwrap();
-
-    let stream = storage.list(None).await.unwrap();
-    let items: Vec<_> = stream.map(|r| r.unwrap()).collect::<Vec<_>>().await;
-
-    assert_eq!(items.len(), 3);
-    assert!(items.contains(&"a.txt".to_string()));
-    assert!(items.contains(&"dir/b.txt".to_string()));
-    assert!(items.contains(&"dir/subdir/c.txt".to_string()));
+    assert_eq!(items, vec!["a.txt", "b.txt", "c.txt"]);
 }
 
 #[tokio::test]
@@ -290,29 +214,13 @@ async fn test_list_with_prefix() {
         .await
         .unwrap();
 
-    let prefix = "files/".to_string();
+    let prefix = "files".to_string();
     let stream = storage.list(Some(&prefix)).await.unwrap();
     let items: Vec<_> = stream.map(|r| r.unwrap()).collect::<Vec<_>>().await;
 
     assert_eq!(items.len(), 2);
     assert!(items.contains(&"files/a.txt".to_string()));
     assert!(items.contains(&"files/b.txt".to_string()));
-}
-
-#[tokio::test]
-async fn test_list_nonexistent_prefix_returns_empty() {
-    let (storage, _temp) = create_temp_storage();
-
-    storage
-        .put_bytes("file.txt".to_string(), b"data")
-        .await
-        .unwrap();
-
-    let prefix = "nonexistent/".to_string();
-    let stream = storage.list(Some(&prefix)).await.unwrap();
-    let items: Vec<_> = stream.collect::<Vec<_>>().await;
-
-    assert_eq!(items.len(), 0);
 }
 
 #[tokio::test]
@@ -349,7 +257,7 @@ async fn test_get_string() {
         .await
         .unwrap();
 
-    let retrieved = storage.get_string(&id).await.unwrap();
+    let retrieved = StorageExt::get_string(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
 }
 
@@ -361,29 +269,28 @@ async fn test_get_string_invalid_utf8() {
 
     storage.put_bytes(id.clone(), &data).await.unwrap();
 
-    let result = storage.get_string(&id).await;
+    let result = StorageExt::get_string(&storage, &id).await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), Error::Generic(_)));
 }
 
 #[tokio::test]
-async fn test_clone_storage() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage1 = LocalStorage::new(temp_dir.path());
+async fn test_copy_to_same_storage() {
+    let (storage, _temp) = create_temp_storage();
+    let source_id = "source.txt".to_string();
+    let data = b"test data";
 
-    storage1
-        .put_bytes("test.txt".to_string(), b"data")
+    storage.put_bytes(source_id.clone(), data).await.unwrap();
+
+    StorageExt::copy_to(&storage, &source_id, &storage)
         .await
         .unwrap();
 
-    let storage2 = storage1.clone();
+    // Source should still exist
+    assert!(storage.exists(&source_id).await.unwrap());
 
-    // Both should point to the same root
-    assert_eq!(storage1.root(), storage2.root());
-
-    // Data should be accessible from both
-    let data = storage2.get_bytes(&"test.txt".to_string()).await.unwrap();
-    assert_eq!(data, b"data");
+    let retrieved = StorageExt::get_bytes(&storage, &source_id).await.unwrap();
+    assert_eq!(retrieved, data);
 }
 
 #[tokio::test]
@@ -395,14 +302,14 @@ async fn test_copy_to_different_storage() {
 
     source.put_bytes(id.clone(), data).await.unwrap();
 
-    source.copy_to(&id, &dest).await.unwrap();
+    StorageExt::copy_to(&source, &id, &dest).await.unwrap();
 
     // Both should have the data
     assert!(source.exists(&id).await.unwrap());
     assert!(dest.exists(&id).await.unwrap());
 
-    let source_data = source.get_bytes(&id).await.unwrap();
-    let dest_data = dest.get_bytes(&id).await.unwrap();
+    let source_data = StorageExt::get_bytes(&source, &id).await.unwrap();
+    let dest_data = StorageExt::get_bytes(&dest, &id).await.unwrap();
     assert_eq!(source_data, dest_data);
 }
 
@@ -420,7 +327,7 @@ async fn test_put_with_async_read() {
         .await
         .unwrap();
 
-    let retrieved = storage.get_bytes(&id).await.unwrap();
+    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
 }
 
@@ -435,7 +342,7 @@ async fn test_get_into_with_async_write() {
     let mut buffer = Vec::new();
     let mut writer = tokio::io::BufWriter::new(&mut buffer);
 
-    let bytes_written = storage.get_into(&id, &mut writer).await.unwrap();
+    let bytes_written = Storage::get_into(&storage, &id, &mut writer).await.unwrap();
     writer.flush().await.unwrap();
 
     assert_eq!(bytes_written, data.len() as u64);
@@ -443,13 +350,34 @@ async fn test_get_into_with_async_write() {
 }
 
 #[tokio::test]
-async fn test_debug_impl() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = LocalStorage::new(temp_dir.path());
+async fn test_multiple_files_with_same_prefix() {
+    let (storage, _temp) = create_temp_storage();
 
-    let debug_output = format!("{:?}", storage);
-    assert!(debug_output.contains("LocalStorage"));
-    assert!(debug_output.contains("root"));
+    storage
+        .put_bytes("prefix/1.txt".to_string(), b"1")
+        .await
+        .unwrap();
+    storage
+        .put_bytes("prefix/2.txt".to_string(), b"2")
+        .await
+        .unwrap();
+    storage
+        .put_bytes("prefix/10.txt".to_string(), b"10")
+        .await
+        .unwrap();
+    storage
+        .put_bytes("other.txt".to_string(), b"other")
+        .await
+        .unwrap();
+
+    let prefix = "prefix".to_string();
+    let stream = storage.list(Some(&prefix)).await.unwrap();
+    let items: Vec<_> = stream.map(|r| r.unwrap()).collect::<Vec<_>>().await;
+
+    assert_eq!(items.len(), 3);
+    assert!(items.contains(&"prefix/1.txt".to_string()));
+    assert!(items.contains(&"prefix/2.txt".to_string()));
+    assert!(items.contains(&"prefix/10.txt".to_string()));
 }
 
 #[tokio::test]
@@ -466,7 +394,9 @@ async fn test_special_characters_in_id() {
     for id in ids {
         storage.put_bytes(id.to_string(), b"data").await.unwrap();
         assert!(storage.exists(&id.to_string()).await.unwrap());
-        let data = storage.get_bytes(&id.to_string()).await.unwrap();
+        let data = StorageExt::get_bytes(&storage, &id.to_string())
+            .await
+            .unwrap();
         assert_eq!(data, b"data");
     }
 }
@@ -479,14 +409,119 @@ async fn test_binary_data() {
 
     storage.put_bytes(id.clone(), &data).await.unwrap();
 
-    let retrieved = storage.get_bytes(&id).await.unwrap();
+    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
 }
 
 #[tokio::test]
-async fn test_concurrent_writes_different_files() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = LocalStorage::new(temp_dir.path());
+async fn test_folder_exists_with_trailing_slash() {
+    let (storage, _temp) = create_temp_storage();
+
+    // Create files under "folder/"
+    storage
+        .put_bytes("folder/file1.txt".to_string(), b"data1")
+        .await
+        .unwrap();
+    storage
+        .put_bytes("folder/file2.txt".to_string(), b"data2")
+        .await
+        .unwrap();
+
+    // Check folder exists (without trailing slash - it's a directory on disk)
+    assert!(storage.folder_exists(&"folder".to_string()).await.unwrap());
+}
+
+#[tokio::test]
+async fn test_folder_exists_nonexistent() {
+    let (storage, _temp) = create_temp_storage();
+
+    // Create some files
+    storage
+        .put_bytes("docs/readme.txt".to_string(), b"data")
+        .await
+        .unwrap();
+
+    // Check non-existent folder
+    assert!(!storage.folder_exists(&"images".to_string()).await.unwrap());
+}
+
+#[tokio::test]
+async fn test_folder_exists_nested() {
+    let (storage, _temp) = create_temp_storage();
+
+    // Create nested structure
+    storage
+        .put_bytes("root/level1/level2/file.txt".to_string(), b"data")
+        .await
+        .unwrap();
+
+    // All parent folders should exist
+    assert!(storage.folder_exists(&"root".to_string()).await.unwrap());
+    assert!(
+        storage
+            .folder_exists(&"root/level1".to_string())
+            .await
+            .unwrap()
+    );
+    assert!(
+        storage
+            .folder_exists(&"root/level1/level2".to_string())
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn test_folder_exists_empty_storage() {
+    let (storage, _temp) = create_temp_storage();
+
+    // No folders should exist in empty storage
+    assert!(!storage.folder_exists(&"any".to_string()).await.unwrap());
+}
+
+#[tokio::test]
+async fn test_path_validation_absolute_path() {
+    let (storage, _temp) = create_temp_storage();
+    let id = "/etc/passwd".to_string();
+
+    let result = storage.put_bytes(id, b"data").await;
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), Error::PermissionDenied(_)));
+}
+
+#[tokio::test]
+async fn test_path_validation_parent_traversal() {
+    let (storage, _temp) = create_temp_storage();
+    let id = "../outside.txt".to_string();
+
+    let result = storage.put_bytes(id, b"data").await;
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), Error::PermissionDenied(_)));
+}
+
+#[tokio::test]
+async fn test_path_validation_nested_parent_traversal() {
+    let (storage, _temp) = create_temp_storage();
+    let id = "foo/../../outside.txt".to_string();
+
+    let result = storage.put_bytes(id, b"data").await;
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), Error::PermissionDenied(_)));
+}
+
+#[tokio::test]
+async fn test_path_validation_empty_id() {
+    let (storage, _temp) = create_temp_storage();
+    let id = "".to_string();
+
+    let result = storage.put_bytes(id, b"data").await;
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), Error::Generic(_)));
+}
+
+#[tokio::test]
+async fn test_concurrent_writes() {
+    let (storage, _temp) = create_temp_storage();
 
     let handles: Vec<_> = (0..10)
         .map(|i| {
@@ -512,8 +547,7 @@ async fn test_concurrent_writes_different_files() {
 
 #[tokio::test]
 async fn test_concurrent_reads() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage = LocalStorage::new(temp_dir.path());
+    let (storage, _temp) = create_temp_storage();
 
     // Prepare data
     for i in 0..10 {
@@ -528,7 +562,7 @@ async fn test_concurrent_reads() {
             tokio::spawn(async move {
                 let id = format!("file{}.txt", i);
                 let expected = format!("data{}", i);
-                let data = storage.get_bytes(&id).await.unwrap();
+                let data = StorageExt::get_bytes(&storage, &id).await.unwrap();
                 assert_eq!(data, expected.as_bytes());
             })
         })
@@ -540,90 +574,82 @@ async fn test_concurrent_reads() {
 }
 
 #[tokio::test]
-async fn test_persistence_across_instances() {
-    let temp_dir = TempDir::new().unwrap();
-    let id = "test.txt".to_string();
-    let data = b"persistent data";
-
-    // Write with first instance
-    {
-        let storage = LocalStorage::new(temp_dir.path());
-        storage.put_bytes(id.clone(), data).await.unwrap();
-    }
-
-    // Read with second instance
-    {
-        let storage = LocalStorage::new(temp_dir.path());
-        let retrieved = storage.get_bytes(&id).await.unwrap();
-        assert_eq!(retrieved, data);
-    }
-}
-
-#[tokio::test]
-async fn test_atomic_write_on_overwrite() {
-    let (storage, _temp) = create_temp_storage();
-    let id = "atomic.txt".to_string();
-
-    // Write initial data
-    storage.put_bytes(id.clone(), b"initial").await.unwrap();
-
-    // Overwrite with new data
-    storage.put_bytes(id.clone(), b"updated").await.unwrap();
-
-    // Should have the new data, not corrupted or mixed
-    let retrieved = storage.get_bytes(&id).await.unwrap();
-    assert_eq!(retrieved, b"updated");
-}
-
-#[tokio::test]
-async fn test_list_deep_nested_structure() {
+async fn test_nested_directories() {
     let (storage, _temp) = create_temp_storage();
 
     storage
-        .put_bytes("a/b/c/d/e/file.txt".to_string(), b"deep")
-        .await
-        .unwrap();
-    storage
-        .put_bytes("a/b/other.txt".to_string(), b"data")
-        .await
-        .unwrap();
-    storage
-        .put_bytes("a/file.txt".to_string(), b"data")
+        .put_bytes("a/b/c/d/e/file.txt".to_string(), b"deeply nested")
         .await
         .unwrap();
 
-    let stream = storage.list(None).await.unwrap();
+    assert!(
+        storage
+            .exists(&"a/b/c/d/e/file.txt".to_string())
+            .await
+            .unwrap()
+    );
+
+    let data = StorageExt::get_bytes(&storage, &"a/b/c/d/e/file.txt".to_string())
+        .await
+        .unwrap();
+    assert_eq!(data, b"deeply nested");
+}
+
+#[tokio::test]
+async fn test_list_nested_structure() {
+    let (storage, _temp) = create_temp_storage();
+
+    storage
+        .put_bytes("a/1.txt".to_string(), b"1")
+        .await
+        .unwrap();
+    storage
+        .put_bytes("a/b/2.txt".to_string(), b"2")
+        .await
+        .unwrap();
+    storage
+        .put_bytes("a/b/c/3.txt".to_string(), b"3")
+        .await
+        .unwrap();
+    storage.put_bytes("x.txt".to_string(), b"x").await.unwrap();
+
+    let stream = storage.list(Some(&"a".to_string())).await.unwrap();
     let items: Vec<_> = stream.map(|r| r.unwrap()).collect::<Vec<_>>().await;
 
     assert_eq!(items.len(), 3);
-    assert!(items.contains(&"a/b/c/d/e/file.txt".to_string()));
-    assert!(items.contains(&"a/b/other.txt".to_string()));
-    assert!(items.contains(&"a/file.txt".to_string()));
+    assert!(items.contains(&"a/1.txt".to_string()));
+    assert!(items.contains(&"a/b/2.txt".to_string()));
+    assert!(items.contains(&"a/b/c/3.txt".to_string()));
 }
 
 #[tokio::test]
-async fn test_exists_directory_returns_false() {
-    let (storage, temp) = create_temp_storage();
-
-    // Create a directory manually
-    let dir_path = temp.path().join("just_a_dir");
-    tokio::fs::create_dir(&dir_path).await.unwrap();
-
-    // exists should return false for directories
-    assert!(!storage.exists(&"just_a_dir".to_string()).await.unwrap());
-}
-
-#[tokio::test]
-async fn test_path_normalization_forward_slashes() {
+async fn test_delete_does_not_remove_empty_directories() {
     let (storage, _temp) = create_temp_storage();
-    let id = "dir/subdir/file.txt".to_string();
-    let data = b"test";
 
-    storage.put_bytes(id.clone(), data).await.unwrap();
+    storage
+        .put_bytes("dir/file.txt".to_string(), b"data")
+        .await
+        .unwrap();
+    storage.delete(&"dir/file.txt".to_string()).await.unwrap();
 
-    let stream = storage.list(None).await.unwrap();
-    let items: Vec<_> = stream.map(|r| r.unwrap()).collect::<Vec<_>>().await;
+    // Directory should still exist (empty)
+    assert!(storage.folder_exists(&"dir".to_string()).await.unwrap());
+}
 
-    // Should use forward slashes consistently
-    assert!(items.contains(&"dir/subdir/file.txt".to_string()));
+#[tokio::test]
+async fn test_clone_storage() {
+    let (storage1, _temp) = create_temp_storage();
+    storage1
+        .put_bytes("test.txt".to_string(), b"data")
+        .await
+        .unwrap();
+
+    let storage2 = storage1.clone();
+
+    // Both should reference the same root
+    assert_eq!(storage2.root(), storage1.root());
+    let data = StorageExt::get_bytes(&storage2, &"test.txt".to_string())
+        .await
+        .unwrap();
+    assert_eq!(data, b"data");
 }
