@@ -4,18 +4,81 @@
 use futures::stream::StreamExt;
 use stowage::{Error, MemoryStorage, Storage, StorageExt};
 
+#[path = "test_common/mod.rs"]
+mod test_common;
+
+// ============================================================================
+// Common test suite using test_common helpers
+// ============================================================================
+
 #[tokio::test]
-async fn test_storage_ext_get_bytes() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-    let data = b"hello world";
-
-    storage.put_bytes(id.clone(), data).await.unwrap();
-
-    // Test StorageExt::get_bytes using explicit trait call
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, data);
+async fn test_put_and_exists() {
+    test_common::test_put_and_exists(&mut || async { MemoryStorage::new() }).await;
 }
+
+#[tokio::test]
+async fn test_put_and_get_bytes() {
+    test_common::test_put_and_get_bytes(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_get_nonexistent() {
+    test_common::test_get_nonexistent(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_delete_existing() {
+    test_common::test_delete_existing(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_delete_idempotent() {
+    test_common::test_delete_idempotent(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_overwrite() {
+    test_common::test_overwrite(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_empty_data() {
+    test_common::test_empty_data(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_large_data() {
+    test_common::test_large_data(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_binary_data() {
+    test_common::test_binary_data(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_get_into() {
+    test_common::test_get_into(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_folder_exists() {
+    test_common::test_folder_exists(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_folder_exists_nested() {
+    test_common::test_folder_exists_nested(&mut || async { MemoryStorage::new() }).await;
+}
+
+#[tokio::test]
+async fn test_special_characters() {
+    test_common::test_special_characters(&mut || async { MemoryStorage::new() }).await;
+}
+
+// ============================================================================
+// Integration-specific tests (StorageExt methods, edge cases, etc.)
+// ============================================================================
 
 #[tokio::test]
 async fn test_storage_ext_get_string() {
@@ -46,19 +109,6 @@ async fn test_storage_ext_get_string_invalid_utf8() {
         Error::Generic(msg) => assert!(msg.contains("invalid utf-8")),
         _ => panic!("Expected Generic error for invalid UTF-8"),
     }
-}
-
-#[tokio::test]
-async fn test_storage_ext_put_bytes() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-    let data = b"test data";
-
-    storage.put_bytes(id.clone(), data).await.unwrap();
-
-    assert!(storage.exists(&id).await.unwrap());
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, data);
 }
 
 #[tokio::test]
@@ -124,36 +174,6 @@ async fn test_storage_ext_copy_to_nonexistent_source() {
 }
 
 #[tokio::test]
-async fn test_storage_trait_exists_on_empty() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-
-    assert!(!storage.exists(&id).await.unwrap());
-}
-
-#[tokio::test]
-async fn test_storage_trait_put_then_exists() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-
-    storage.put_bytes(id.clone(), b"data").await.unwrap();
-
-    assert!(storage.exists(&id).await.unwrap());
-}
-
-#[tokio::test]
-async fn test_storage_trait_delete_then_not_exists() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-
-    storage.put_bytes(id.clone(), b"data").await.unwrap();
-    assert!(storage.exists(&id).await.unwrap());
-
-    storage.delete(&id).await.unwrap();
-    assert!(!storage.exists(&id).await.unwrap());
-}
-
-#[tokio::test]
 async fn test_storage_trait_list_empty() {
     let storage = MemoryStorage::new();
 
@@ -204,21 +224,6 @@ async fn test_storage_trait_list_with_prefix() {
 }
 
 #[tokio::test]
-async fn test_storage_trait_get_into_returns_byte_count() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-    let data = b"hello world";
-
-    storage.put_bytes(id.clone(), data).await.unwrap();
-
-    let mut output = Vec::new();
-    let bytes_written = Storage::get_into(&storage, &id, &mut output).await.unwrap();
-
-    assert_eq!(bytes_written, data.len() as u64);
-    assert_eq!(output, data);
-}
-
-#[tokio::test]
 async fn test_storage_trait_put_with_length_hint() {
     let storage = MemoryStorage::new();
     let id = "test.txt".to_string();
@@ -247,57 +252,6 @@ async fn test_storage_trait_put_without_length_hint() {
     let mut reader = tokio::io::BufReader::new(cursor);
 
     storage.put(id.clone(), &mut reader, None).await.unwrap();
-
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, data);
-}
-
-#[tokio::test]
-async fn test_storage_trait_overwrite_updates_data() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-
-    storage.put_bytes(id.clone(), b"original").await.unwrap();
-    let first = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(first, b"original");
-
-    storage.put_bytes(id.clone(), b"updated").await.unwrap();
-    let second = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(second, b"updated");
-}
-
-#[tokio::test]
-async fn test_storage_trait_delete_idempotent() {
-    let storage = MemoryStorage::new();
-    let id = "test.txt".to_string();
-
-    storage.put_bytes(id.clone(), b"data").await.unwrap();
-
-    storage.delete(&id).await.unwrap();
-    storage.delete(&id).await.unwrap();
-    storage.delete(&id).await.unwrap();
-
-    assert!(!storage.exists(&id).await.unwrap());
-}
-
-#[tokio::test]
-async fn test_round_trip_empty_data() {
-    let storage = MemoryStorage::new();
-    let id = "empty.txt".to_string();
-
-    storage.put_bytes(id.clone(), b"").await.unwrap();
-
-    let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
-    assert_eq!(retrieved, b"");
-}
-
-#[tokio::test]
-async fn test_round_trip_binary_data() {
-    let storage = MemoryStorage::new();
-    let id = "binary.dat".to_string();
-    let data: Vec<u8> = (0..=255).collect();
-
-    storage.put_bytes(id.clone(), &data).await.unwrap();
 
     let retrieved = StorageExt::get_bytes(&storage, &id).await.unwrap();
     assert_eq!(retrieved, data);
