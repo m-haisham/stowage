@@ -4,6 +4,13 @@ use futures::stream::StreamExt;
 use std::collections::HashMap;
 use stowage::{Error, MemoryStorage, Storage, StorageExt};
 
+mod common;
+
+// Use the common test suite for MemoryStorage
+storage_test_suite!(setup = || async { MemoryStorage::new() });
+
+// MemoryStorage-specific tests (not in common suite)
+
 #[tokio::test]
 async fn test_new_storage_is_empty() {
     let storage = MemoryStorage::new();

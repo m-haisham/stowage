@@ -54,11 +54,15 @@ impl Storage for S3Storage {
                 Ok(_) => Ok(true),
                 Err(e) => {
                     // `head_object` returns a modeled service error; treat 404/NoSuchKey as false.
+                    // Check both the error string and the service error metadata
                     let msg = e.to_string();
+                    let meta_str = format!("{:?}", e);
                     if msg.contains("NotFound")
                         || msg.contains("NoSuchKey")
                         || msg.contains("404")
                         || msg.contains("StatusCode(404)")
+                        || meta_str.contains("NotFound")
+                        || meta_str.contains("NoSuchKey")
                     {
                         Ok(false)
                     } else {
