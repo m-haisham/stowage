@@ -166,6 +166,7 @@ pub use adapters::local::*;
 #[cfg(feature = "memory")]
 pub use adapters::memory::*;
 pub use adapters::multi;
+pub use adapters::multi::{ConflictStrategy, MigrateOptions, MigrationResult};
 #[cfg(feature = "onedrive")]
 pub use adapters::onedrive::*;
 #[cfg(feature = "s3")]
@@ -304,6 +305,48 @@ pub trait StorageExt: Storage {
             let _ = downloaded;
             Ok(uploaded)
         }
+    }
+
+    /// Migrate all items from this storage to `dest`.
+    ///
+    /// This is a convenience wrapper around [`multi::migration::migrate`].  See
+    /// [`MigrateOptions`] for the full set of knobs (prefix filtering, conflict
+    /// strategy, concurrency, and optional source deletion).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "memory")]
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use stowage::{MemoryStorage, StorageExt, MigrateOptions, ConflictStrategy};
+    ///
+    /// let source = MemoryStorage::new();
+    /// let dest   = MemoryStorage::new();
+    ///
+    /// source.put_bytes("a.txt".to_string(), b"hello").await?;
+    /// source.put_bytes("b.txt".to_string(), b"world").await?;
+    ///
+    /// let result = source
+    ///     .migrate_to(&dest, MigrateOptions {
+    ///         conflict: ConflictStrategy::Skip,
+    ///         ..Default::default()
+    ///     })
+    ///     .await?;
+    ///
+    /// assert_eq!(result.transferred_count(), 2);
+    /// assert!(result.is_complete());
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn migrate_to<S2: Storage<Id = Self::Id>>(
+        &self,
+        dest: &S2,
+        options: MigrateOptions<Self::Id>,
+    ) -> impl std::future::Future<Output = Result<MigrationResult<Self::Id>>> + Send
+    where
+        Self: Sized,
+    {
+        adapters::multi::migration::migrate(self, dest, options)
     }
 }
 
