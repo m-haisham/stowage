@@ -307,6 +307,43 @@ pub trait StorageExt: Storage {
         }
     }
 
+    /// Move an item from this storage to another by copying then deleting the source.
+    ///
+    /// This is a streaming copy followed by a source delete.  If the copy
+    /// fails the source item is left untouched.  If the delete fails after a
+    /// successful copy, the error is returned — at that point the item exists
+    /// in both storages and the caller should handle the duplicate.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "memory")]
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use stowage::{MemoryStorage, StorageExt};
+    ///
+    /// let source = MemoryStorage::new();
+    /// let dest   = MemoryStorage::new();
+    ///
+    /// source.put_bytes("file.txt".to_string(), b"hello").await?;
+    ///
+    /// source.move_to(&"file.txt".to_string(), &dest).await?;
+    ///
+    /// assert!(!source.exists(&"file.txt".to_string()).await?);
+    /// assert!(dest.exists(&"file.txt".to_string()).await?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn move_to<S2: Storage<Id = Self::Id>>(
+        &self,
+        id: &Self::Id,
+        dest: &S2,
+    ) -> impl std::future::Future<Output = Result<()>> + Send {
+        async move {
+            self.copy_to(id, dest).await?;
+            self.delete(id).await
+        }
+    }
+
     /// Migrate all items from this storage to `dest`.
     ///
     /// This is a convenience wrapper around [`multi::migration::migrate`].  See
