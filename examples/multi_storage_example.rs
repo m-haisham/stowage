@@ -1,298 +1,197 @@
-//! Examples showing multi-storage patterns.
+//! Demonstrates the multi-storage adapters: Mirror, Fallback, and Migration.
 //!
 //! Run with:
 //! ```sh
 //! cargo run --example multi_storage_example --features="memory"
 //! ```
 
-use futures::StreamExt as _;
 use std::time::Duration;
+
+use futures::StreamExt as _;
 use stowage::multi::migration::{ConflictStrategy, MigrateOptions, migrate};
 use stowage::multi::{FallbackStorage, MirrorStorage, ReturnPolicy, WriteStrategy};
 use stowage::{MemoryStorage, Storage, StorageExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Multi-Storage Examples ===\n");
-
-    // Example 1: Mirror - replicate writes across backends
     example_mirror().await?;
-
-    // Example 2: Fallback - use secondary when primary fails
     example_fallback().await?;
-
-    // Example 3: Migration - bulk-copy items from one backend to another
-    example_migration().await?;
-
-    // Example 4: Migration with move semantics and prefix filtering
+    example_migration_copy().await?;
     example_migration_move().await?;
-
-    // Example 5: Migration with conflict handling
     example_migration_conflicts().await?;
-
-    println!("\n=== Done! ===");
     Ok(())
 }
 
-// ── Example 1 ─────────────────────────────────────────────────────────────────
+// ── Mirror ────────────────────────────────────────────────────────────────────
 
-/// Mirror Storage — replicate data across multiple backends.
+/// [`MirrorStorage`] fans writes out to every backend and reads from the first
+/// healthy one.  [`WriteStrategy::Quorum`] means a write only needs to succeed
+/// on the majority (2 of 3 here) to be considered successful.
 async fn example_mirror() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- Mirror Storage ---");
+    println!("=== Mirror ===");
 
     let storage = MirrorStorage::builder()
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
         .add_backend(MemoryStorage::new())
-        .write_strategy(WriteStrategy::Quorum { rollback: false }) // Need 2/3
-        .return_policy(ReturnPolicy::Optimistic) // Return early!
+        .write_strategy(WriteStrategy::Quorum { rollback: false })
+        .return_policy(ReturnPolicy::Optimistic)
         .backend_timeout(Duration::from_secs(5))
         .build();
 
-    let data = b"data";
-    storage
-        .put(
-            "file.txt".to_string(),
-            &mut std::io::Cursor::new(data),
-            Some(data.len() as u64),
-        )
-        .await?;
+    storage.put_bytes("hello.txt".to_string(), b"hello").await?;
 
-    let mut buf = Vec::new();
-    storage.get_into(&"file.txt".to_string(), &mut buf).await?;
-    assert_eq!(buf, b"data");
+    let content = storage.get_string(&"hello.txt".to_string()).await?;
+    println!("Read back: {content}");
 
-    println!("Wrote to 3 backends with quorum strategy, read from primary");
     println!();
     Ok(())
 }
 
-// ── Example 2 ─────────────────────────────────────────────────────────────────
+// ── Fallback ──────────────────────────────────────────────────────────────────
 
-/// Fallback Storage — writes to both, reads from primary.
+/// [`FallbackStorage`] tries the primary for reads; if it fails it falls back
+/// to the secondary.  With `write_through` enabled, writes go to both so the
+/// secondary stays in sync.
 async fn example_fallback() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- Fallback Storage ---");
+    println!("=== Fallback ===");
 
-    let primary = MemoryStorage::new();
-    let secondary = MemoryStorage::new();
+    let storage =
+        FallbackStorage::new(MemoryStorage::new(), MemoryStorage::new()).with_write_through(true);
 
-    let storage = FallbackStorage::new(primary, secondary).with_write_through(true);
-
-    let data = b"replicated data";
     storage
-        .put(
-            "file.txt".to_string(),
-            &mut std::io::Cursor::new(data),
-            Some(data.len() as u64),
-        )
+        .put_bytes("config.toml".to_string(), b"key = 1")
         .await?;
 
-    assert!(storage.primary().exists(&"file.txt".to_string()).await?);
-    assert!(storage.secondary().exists(&"file.txt".to_string()).await?);
+    // Both backends now hold the file.
+    let in_primary = Storage::exists(storage.primary(), &"config.toml".to_string()).await?;
+    let in_secondary = Storage::exists(storage.secondary(), &"config.toml".to_string()).await?;
+    println!("In primary: {in_primary}, in secondary: {in_secondary}");
 
-    let mut buf = Vec::new();
-    storage.get_into(&"file.txt".to_string(), &mut buf).await?;
-    assert_eq!(buf, b"replicated data");
-
-    println!("Writes to both primary and secondary, reads from primary");
     println!();
     Ok(())
 }
 
-// ── Example 3 ─────────────────────────────────────────────────────────────────
+// ── Migration: copy ───────────────────────────────────────────────────────────
 
-/// Migration — bulk-copy every item from one storage backend to another.
-///
-/// This is the simplest migration: copy everything from `source` into `dest`
-/// with the default options (overwrite conflicts, concurrency of 4, keep
-/// source intact).
-async fn example_migration() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- Migration: copy all items ---");
+/// [`migrate`] bulk-copies every item from `source` to `dest`.  The source is
+/// left untouched — this is a copy, not a move.
+async fn example_migration_copy() -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== Migration: copy ===");
 
-    // Imagine `source` is your old storage and `dest` is the new one.
     let source = MemoryStorage::new();
     let dest = MemoryStorage::new();
 
-    // Seed the source with some files.
     for i in 1..=5u8 {
-        source
-            .put_bytes(
-                format!("report-{i}.txt"),
-                format!("report content {i}").as_bytes(),
-            )
-            .await?;
+        source.put_bytes(format!("file-{i}.txt"), &[i]).await?;
     }
 
-    println!("Source has 5 files before migration.");
-
-    // Migrate everything with default options.
     let result = migrate(&source, &dest, MigrateOptions::default()).await?;
-
     println!("{result}");
-    assert_eq!(result.transferred_count(), 5);
-    assert!(result.is_complete(), "no errors expected");
 
-    // Source is unchanged — this is a copy, not a move.
-    let source_stream = source.list(None).await?;
-    let source_count = source_stream.count().await;
-    assert_eq!(source_count, 5, "source still has all files");
+    let source_count = Storage::list(&source, None).await?.count().await;
+    println!("Source still has {source_count} files.");
 
-    println!("Source still has {source_count} files (copy, not move).");
     println!();
     Ok(())
 }
 
-// ── Example 4 ─────────────────────────────────────────────────────────────────
+// ── Migration: move ───────────────────────────────────────────────────────────
 
-/// Migration with move semantics and prefix filtering.
-///
-/// Only files under `"archive/"` are migrated, and they are deleted from the
-/// source once successfully copied — effectively moving them to the new backend.
+/// Setting `delete_source: true` gives move semantics — items are removed from
+/// the source after a successful copy.  Combined with a `prefix`, only the
+/// matching subset is moved.
 async fn example_migration_move() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- Migration: move a prefix ---");
+    println!("=== Migration: move a prefix ===");
 
     let source = MemoryStorage::new();
     let dest = MemoryStorage::new();
 
-    // A mix of files — only the "archive/" ones should move.
+    for year in [2022u16, 2023, 2024] {
+        source
+            .put_bytes(format!("archive/{year}.tar.gz"), b"data")
+            .await?;
+    }
     source
-        .put_bytes("archive/2022.tar.gz".to_string(), b"2022 data")
+        .put_bytes("live/current.db".to_string(), b"live")
         .await?;
-    source
-        .put_bytes("archive/2023.tar.gz".to_string(), b"2023 data")
-        .await?;
-    source
-        .put_bytes("archive/2024.tar.gz".to_string(), b"2024 data")
-        .await?;
-    source
-        .put_bytes("live/current.db".to_string(), b"live data")
-        .await?;
-    source
-        .put_bytes("live/index.db".to_string(), b"index data")
-        .await?;
-
-    println!("Source before: {} archive files, 2 live files.", 3);
 
     let result = source
         .migrate_to(
             &dest,
             MigrateOptions {
                 prefix: Some("archive/".to_string()),
-                delete_source: true, // move semantics
-                concurrency: 4,
+                delete_source: true,
                 ..Default::default()
             },
         )
         .await?;
-
     println!("{result}");
 
-    assert_eq!(result.transferred_count(), 3);
-    assert_eq!(result.deleted_count(), 3);
-    assert!(result.is_complete());
+    let source_remaining: Vec<String> = Storage::list(&source, None)
+        .await?
+        .filter_map(|r| async move { r.ok() })
+        .collect()
+        .await;
+    println!("Remaining in source: {source_remaining:?}");
 
-    // Archive files are gone from source.
-    assert!(!source.exists(&"archive/2022.tar.gz".to_string()).await?);
-    assert!(!source.exists(&"archive/2023.tar.gz".to_string()).await?);
-
-    // Live files are untouched.
-    assert!(source.exists(&"live/current.db".to_string()).await?);
-    assert!(source.exists(&"live/index.db".to_string()).await?);
-
-    // Archive files are present in dest.
-    assert!(dest.exists(&"archive/2022.tar.gz".to_string()).await?);
-    assert!(dest.exists(&"archive/2023.tar.gz".to_string()).await?);
-
-    println!("Archive files moved to dest; live files remain in source.");
     println!();
     Ok(())
 }
 
-// ── Example 5 ─────────────────────────────────────────────────────────────────
+// ── Migration: conflict strategies ───────────────────────────────────────────
 
-/// Migration with conflict handling.
+/// When the destination already holds a file with the same ID, [`ConflictStrategy`]
+/// decides what happens:
 ///
-/// Demonstrates the three [`ConflictStrategy`] variants when the destination
-/// already contains some of the files being migrated.
+/// - **`Overwrite`** *(default)* — replace the existing file.
+/// - **`Skip`** — leave the destination file untouched; count it as skipped.
+/// - **`Fail`** — record it as a per-item error (the rest of the batch still runs).
 async fn example_migration_conflicts() -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- Migration: conflict strategies ---");
+    println!("=== Migration: conflict strategies ===");
 
-    // ── Skip ─────────────────────────────────────────────────────────────────
-    {
-        let source = MemoryStorage::new();
-        let dest = MemoryStorage::new();
+    let source = MemoryStorage::new();
+    source.put_bytes("a.txt".to_string(), b"new").await?;
+    source.put_bytes("b.txt".to_string(), b"new").await?;
 
-        source.put_bytes("a.txt".to_string(), b"new a").await?;
-        source.put_bytes("b.txt".to_string(), b"new b").await?;
-        source.put_bytes("c.txt".to_string(), b"new c").await?;
+    // Each strategy gets a fresh dest pre-populated with a stale "a.txt" so
+    // the results are independent and comparable.
 
-        // Pre-populate dest with a stale copy of "a.txt".
-        dest.put_bytes("a.txt".to_string(), b"old a").await?;
+    // Skip — "a.txt" stays as "old"; "b.txt" is copied normally.
+    let dest = MemoryStorage::new();
+    dest.put_bytes("a.txt".to_string(), b"old").await?;
+    let skip = migrate(
+        &source,
+        &dest,
+        MigrateOptions {
+            conflict: ConflictStrategy::Skip,
+            ..Default::default()
+        },
+    )
+    .await?;
+    println!("Skip:      {skip}");
 
-        let result = migrate(
-            &source,
-            &dest,
-            MigrateOptions {
-                conflict: ConflictStrategy::Skip,
-                ..Default::default()
-            },
-        )
-        .await?;
+    // Overwrite (default) — "a.txt" is replaced with "new".
+    let dest = MemoryStorage::new();
+    dest.put_bytes("a.txt".to_string(), b"old").await?;
+    let overwrite = migrate(&source, &dest, MigrateOptions::default()).await?;
+    println!("Overwrite: {overwrite}");
 
-        println!("[Skip]  {result}");
-        assert_eq!(result.transferred_count(), 2); // b.txt and c.txt
-        assert_eq!(result.skipped_count(), 1); // a.txt was skipped
-        assert!(result.is_complete()); // skips are not errors
-
-        // The original "a.txt" in dest must be preserved.
-        let kept = StorageExt::get_bytes(&dest, &"a.txt".to_string()).await?;
-        assert_eq!(kept, b"old a", "original content must be preserved");
-    }
-
-    // ── Overwrite (default) ───────────────────────────────────────────────────
-    {
-        let source = MemoryStorage::new();
-        let dest = MemoryStorage::new();
-
-        source.put_bytes("a.txt".to_string(), b"new a").await?;
-        dest.put_bytes("a.txt".to_string(), b"old a").await?;
-
-        let result = migrate(&source, &dest, MigrateOptions::default()).await?;
-
-        println!("[Overwrite] {result}");
-        assert_eq!(result.transferred_count(), 1);
-
-        let overwritten = StorageExt::get_bytes(&dest, &"a.txt".to_string()).await?;
-        assert_eq!(overwritten, b"new a", "content must be overwritten");
-    }
-
-    // ── Fail ─────────────────────────────────────────────────────────────────
-    {
-        let source = MemoryStorage::new();
-        let dest = MemoryStorage::new();
-
-        source.put_bytes("a.txt".to_string(), b"new a").await?;
-        source.put_bytes("b.txt".to_string(), b"new b").await?;
-        dest.put_bytes("a.txt".to_string(), b"old a").await?;
-
-        let result = migrate(
-            &source,
-            &dest,
-            MigrateOptions {
-                conflict: ConflictStrategy::Fail,
-                ..Default::default()
-            },
-        )
-        .await?;
-
-        println!("[Fail]  {result}");
-        assert_eq!(result.transferred_count(), 1); // b.txt succeeded
-        assert_eq!(result.error_count(), 1); // a.txt recorded as error
-
-        // The migration itself does NOT return Err — per-item errors are
-        // collected inside the result so the rest of the batch can proceed.
-        let (failed_id, err) = &result.errors[0];
-        println!("  conflict error on '{failed_id}': {err}");
+    // Fail — "a.txt" conflict is recorded as an error; "b.txt" still succeeds.
+    let dest = MemoryStorage::new();
+    dest.put_bytes("a.txt".to_string(), b"old").await?;
+    let fail = migrate(
+        &source,
+        &dest,
+        MigrateOptions {
+            conflict: ConflictStrategy::Fail,
+            ..Default::default()
+        },
+    )
+    .await?;
+    println!("Fail:      {fail}");
+    if let Some((id, err)) = fail.errors.first() {
+        println!("  error on '{id}': {err}");
     }
 
     println!();
