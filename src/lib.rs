@@ -3,6 +3,13 @@ use std::fmt::Debug;
 use futures::stream::BoxStream;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
+#[cfg(feature = "memory")]
+pub use adapters::memory::MemoryStorage;
+
+pub use adapters::multi::migration::{ConflictStrategy, MigrateOptions, MigrationResult};
+
+pub use adapters::multi;
+
 /// A specialized Result type for Storage operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -148,33 +155,6 @@ pub mod adapters {
     #[cfg(feature = "webdav")]
     pub mod webdav;
 }
-
-// Convenient re-exports at the crate root.
-#[allow(ambiguous_glob_reexports)]
-#[cfg(feature = "azure")]
-pub use adapters::azure::*;
-#[cfg(feature = "box_storage")]
-pub use adapters::box_storage::*;
-#[cfg(feature = "dropbox")]
-pub use adapters::dropbox::*;
-#[cfg(feature = "ftp")]
-pub use adapters::ftp::*;
-#[cfg(feature = "gdrive")]
-pub use adapters::gdrive::*;
-#[cfg(feature = "local")]
-pub use adapters::local::*;
-#[cfg(feature = "memory")]
-pub use adapters::memory::*;
-pub use adapters::multi;
-pub use adapters::multi::{ConflictStrategy, MigrateOptions, MigrationResult};
-#[cfg(feature = "onedrive")]
-pub use adapters::onedrive::*;
-#[cfg(feature = "s3")]
-pub use adapters::s3::*;
-#[cfg(feature = "sftp")]
-pub use adapters::sftp::*;
-#[cfg(feature = "webdav")]
-pub use adapters::webdav::*;
 
 /// The core storage trait.
 ///

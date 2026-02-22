@@ -30,7 +30,8 @@ mod s3_integration_tests {
     use aws_config::BehaviorVersion;
     use aws_sdk_s3::Client;
     use aws_sdk_s3::config::{Credentials, Region};
-    use stowage::{Error, S3Storage, Storage, StorageExt};
+    use stowage::adapters::s3::S3Storage;
+    use stowage::{Error, Storage, StorageExt};
 
     use super::test_common;
 

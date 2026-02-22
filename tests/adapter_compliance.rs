@@ -44,7 +44,7 @@ fn memory_storage_implements_storage() {
 #[test]
 fn local_storage_implements_storage() {
     use std::path::PathBuf;
-    use stowage::LocalStorage;
+    use stowage::adapters::local::LocalStorage;
 
     assert!(LocalStorage::check_id_bounds());
     assert!(LocalStorage::check_storage_bounds());
@@ -57,7 +57,7 @@ fn local_storage_implements_storage() {
 #[cfg(feature = "s3")]
 #[test]
 fn s3_storage_implements_storage() {
-    use stowage::S3Storage;
+    use stowage::adapters::s3::S3Storage;
 
     assert!(S3Storage::check_id_bounds());
     assert!(S3Storage::check_storage_bounds());
@@ -67,7 +67,7 @@ fn s3_storage_implements_storage() {
 #[cfg(feature = "azure")]
 #[test]
 fn azure_storage_implements_storage() {
-    use stowage::AzureStorage;
+    use stowage::adapters::azure::AzureStorage;
 
     assert!(AzureStorage::check_id_bounds());
     assert!(AzureStorage::check_storage_bounds());
@@ -81,8 +81,7 @@ fn azure_storage_implements_storage() {
 #[test]
 fn gdrive_storage_implements_storage() {
     use secrecy::SecretString;
-    use stowage::GoogleDriveStorage;
-    use stowage::adapters::gdrive::TokenProvider;
+    use stowage::adapters::gdrive::{GoogleDriveStorage, TokenProvider};
 
     assert!(GoogleDriveStorage::check_id_bounds());
     assert!(GoogleDriveStorage::check_storage_bounds());
@@ -97,8 +96,7 @@ fn gdrive_storage_implements_storage() {
 #[test]
 fn onedrive_storage_implements_storage() {
     use secrecy::SecretString;
-    use stowage::OneDriveStorage;
-    use stowage::adapters::onedrive::TokenProvider;
+    use stowage::adapters::onedrive::{OneDriveStorage, TokenProvider};
 
     assert!(OneDriveStorage::check_id_bounds());
     assert!(OneDriveStorage::check_storage_bounds());
@@ -112,7 +110,7 @@ fn onedrive_storage_implements_storage() {
 #[cfg(feature = "dropbox")]
 #[test]
 fn dropbox_storage_implements_storage() {
-    use stowage::DropboxStorage;
+    use stowage::adapters::dropbox::DropboxStorage;
 
     assert!(DropboxStorage::check_id_bounds());
     assert!(DropboxStorage::check_storage_bounds());
@@ -125,7 +123,7 @@ fn dropbox_storage_implements_storage() {
 #[cfg(feature = "webdav")]
 #[test]
 fn webdav_storage_implements_storage() {
-    use stowage::WebDAVStorage;
+    use stowage::adapters::webdav::WebDAVStorage;
 
     assert!(WebDAVStorage::check_id_bounds());
     assert!(WebDAVStorage::check_storage_bounds());
@@ -138,7 +136,7 @@ fn webdav_storage_implements_storage() {
 #[cfg(feature = "box_storage")]
 #[test]
 fn box_storage_implements_storage() {
-    use stowage::BoxStorage;
+    use stowage::adapters::box_storage::BoxStorage;
 
     assert!(BoxStorage::check_id_bounds());
     assert!(BoxStorage::check_storage_bounds());
@@ -196,7 +194,7 @@ fn adapters_implement_debug() {
 #[test]
 fn local_storage_debug() {
     use std::path::PathBuf;
-    use stowage::LocalStorage;
+    use stowage::adapters::local::LocalStorage;
 
     let storage = LocalStorage::new(PathBuf::from("/tmp/test"));
     let debug_str = format!("{:?}", storage);
@@ -206,7 +204,7 @@ fn local_storage_debug() {
 #[cfg(feature = "azure")]
 #[test]
 fn azure_storage_debug_hides_secrets() {
-    use stowage::AzureStorage;
+    use stowage::adapters::azure::AzureStorage;
 
     let storage = AzureStorage::new("account", "container", "super_secret_sas_token");
     let debug_str = format!("{:?}", storage);
@@ -217,7 +215,7 @@ fn azure_storage_debug_hides_secrets() {
 #[cfg(feature = "dropbox")]
 #[test]
 fn dropbox_storage_debug_hides_secrets() {
-    use stowage::DropboxStorage;
+    use stowage::adapters::dropbox::DropboxStorage;
 
     let storage = DropboxStorage::new("super_secret_access_token");
     let debug_str = format!("{:?}", storage);
@@ -228,7 +226,7 @@ fn dropbox_storage_debug_hides_secrets() {
 #[cfg(feature = "box_storage")]
 #[test]
 fn box_storage_debug_hides_secrets() {
-    use stowage::BoxStorage;
+    use stowage::adapters::box_storage::BoxStorage;
 
     let storage = BoxStorage::new("super_secret_box_token");
     let debug_str = format!("{:?}", storage);
@@ -239,7 +237,7 @@ fn box_storage_debug_hides_secrets() {
 #[cfg(feature = "webdav")]
 #[test]
 fn webdav_storage_debug_hides_secrets() {
-    use stowage::WebDAVStorage;
+    use stowage::adapters::webdav::WebDAVStorage;
 
     let storage = WebDAVStorage::new(
         "https://example.com/dav",
@@ -267,7 +265,7 @@ fn adapters_are_send_sync() {
 #[cfg(feature = "azure")]
 #[test]
 fn azure_is_send_sync() {
-    use stowage::AzureStorage;
+    use stowage::adapters::azure::AzureStorage;
 
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
@@ -279,7 +277,7 @@ fn azure_is_send_sync() {
 #[cfg(feature = "dropbox")]
 #[test]
 fn dropbox_is_send_sync() {
-    use stowage::DropboxStorage;
+    use stowage::adapters::dropbox::DropboxStorage;
 
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
@@ -291,7 +289,7 @@ fn dropbox_is_send_sync() {
 #[cfg(feature = "box_storage")]
 #[test]
 fn box_is_send_sync() {
-    use stowage::BoxStorage;
+    use stowage::adapters::box_storage::BoxStorage;
 
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
@@ -303,7 +301,7 @@ fn box_is_send_sync() {
 #[cfg(feature = "gdrive")]
 #[test]
 fn gdrive_is_send_sync() {
-    use stowage::GoogleDriveStorage;
+    use stowage::adapters::gdrive::GoogleDriveStorage;
 
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
@@ -315,7 +313,7 @@ fn gdrive_is_send_sync() {
 #[cfg(feature = "onedrive")]
 #[test]
 fn onedrive_is_send_sync() {
-    use stowage::OneDriveStorage;
+    use stowage::adapters::onedrive::OneDriveStorage;
 
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}

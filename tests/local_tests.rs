@@ -1,7 +1,8 @@
 //! Comprehensive tests for LocalStorage adapter
 
 use futures::stream::StreamExt;
-use stowage::{Error, LocalStorage, Storage, StorageExt};
+use stowage::adapters::local::LocalStorage;
+use stowage::{Error, Storage, StorageExt};
 use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 

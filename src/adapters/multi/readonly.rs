@@ -92,7 +92,7 @@ mod tests {
     #[cfg(feature = "memory")]
     #[tokio::test]
     async fn test_readonly_read() {
-        use crate::MemoryStorage;
+        use crate::adapters::memory::MemoryStorage;
 
         let inner = MemoryStorage::new();
         inner
