@@ -1,4 +1,5 @@
 //! Comprehensive tests for LocalStorage adapter
+#![cfg(feature = "local")]
 
 use futures::stream::StreamExt;
 use stowage::adapters::local::LocalStorage;

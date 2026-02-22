@@ -299,7 +299,7 @@ pub trait StorageExt: Storage {
     /// ```rust
     /// # #[cfg(feature = "memory")]
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// use stowage::{MemoryStorage, StorageExt};
+    /// use stowage::{MemoryStorage, Storage, StorageExt};
     ///
     /// let source = MemoryStorage::new();
     /// let dest   = MemoryStorage::new();
