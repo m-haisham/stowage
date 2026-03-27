@@ -7,7 +7,7 @@ edition = "2024"
 license = "MIT"
 respository = "https://github.com/m-haisham/stowage"
 keywords = ["storage", "cloud", "s3", "drive", "filesystem"]
-categories = ["asynchronous", "cloud-services", "filesystem"]
+categories = ["filesystem", "web-programming"]
 
 [features]
 default = ['memory']
