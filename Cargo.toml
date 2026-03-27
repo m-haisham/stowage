@@ -2,7 +2,12 @@
 name = "stowage"
 description = "A unified async storage abstraction layer for Rust, supporting various storage backends and cloud platforms."
 version = "0.1.0"
+resolve = "3"
 edition = "2024"
+license = "MIT"
+respository = "https://github.com/m-haisham/stowage"
+keywords = ["storage", "abstraction", "async", "cloud", "s3", "gdrive", "onedrive", "dropbox", "box", "azure", "webdav", "sftp", "ftp"]
+categories = ["storage", "cloud", "async"]
 
 [features]
 default = ['memory']
