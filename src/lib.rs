@@ -167,6 +167,21 @@ pub mod adapters {
 ///
 /// For ID-based adapters, you must resolve paths to IDs using the native API before
 /// calling storage methods.
+///
+/// # Example
+///
+/// ```rust
+/// # #[cfg(feature = "memory")]
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// use stowage::{MemoryStorage, Storage, StorageExt};
+/// let storage = MemoryStorage::new();
+/// let id = "file.txt".to_string();
+/// storage.put_bytes(id.clone(), b"hello world").await?;
+/// let exists = storage.exists(&id).await?;
+/// println!("Exists: {exists}");
+/// # Ok(())
+/// # }
+/// ```
 pub trait Storage: Send + Sync + Debug {
     /// The identifier type for this storage backend.
     type Id: Clone + Debug + Send + Sync + 'static;
